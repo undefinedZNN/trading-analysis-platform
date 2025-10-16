@@ -1,0 +1,97 @@
+# 依赖文件
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# 运行时数据
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# 覆盖率目录
+lib-cov
+coverage/
+*.lcov
+.nyc_output
+
+# 构建输出
+dist/
+build/
+*.tsbuildinfo
+
+# 环境变量文件
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 日志文件
+logs
+*.log
+
+# 临时文件
+tmp/
+temp/
+
+# IDE 配置文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS 生成的文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# TypeScript 缓存
+*.tsbuildinfo
+
+# Jest 缓存
+.jest/
+
+# ESLint 缓存
+.eslintcache
+
+# Prettier 缓存
+.prettierignore
+
+# 包管理器锁文件（根据团队约定选择保留一个）
+# package-lock.json
+# yarn.lock
+
+# 数据库文件
+*.sqlite
+*.db
+
+# 上传文件
+uploads/
+
+# 备份文件
+*.backup
+*.bak
+
+# 本地配置文件
+config/local.json
+config/development.json
+config/production.json
+
+# PM2 配置
+ecosystem.config.js
+
+# Docker 相关
+.dockerignore
+
+# 测试相关
+test-results/
+playwright-report/
+test-results.xml
