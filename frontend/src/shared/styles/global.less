@@ -1,0 +1,54 @@
+@bg-color: #f5f7fa;
+@side-bg: #0f1b2a;
+@text-color: #1f2429;
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', 'Microsoft YaHei', BlinkMacSystemFont, sans-serif;
+  background: @bg-color;
+  color: @text-color;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-layout {
+  min-height: 100vh;
+}
+
+.app-sider {
+  background: @side-bg;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-sider-logo {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: 1px;
+}
+
+.app-content {
+  padding: 32px 48px;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.card-section {
+  margin-bottom: 32px;
+}
+
+.upload-form input[type='file'] {
+  margin-top: 8px;
+}
+
+.table-action-buttons {
+  display: flex;
+  gap: 8px;
+}

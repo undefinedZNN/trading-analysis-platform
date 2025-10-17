@@ -75,6 +75,9 @@
 ### 常用命令
 
 ```bash
+# 查看状态
+make status
+
 # 启动开发数据库
 make dev-up-local
 

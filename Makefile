@@ -1,6 +1,10 @@
 # Trading Analysis Platform - Development Makefile
 
-.PHONY: help dev-up dev-down dev-logs dev-reset db-connect redis-connect install-backend install-frontend install-all
+DOCKER_COMPOSE ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
+COMPOSE_FILE_DEV ?= docker-compose.dev.yml
+COMPOSE_FILE_LOCAL ?= docker-compose.local.yml
+
+.PHONY: help dev-up dev-up-local dev-up-pull dev-down dev-logs dev-reset db-connect redis-connect install-backend install-frontend install-all setup-env status
 
 # Default target
 help:
@@ -27,38 +31,38 @@ help:
 # Database and services
 dev-up:
 	@echo "Starting development databases..."
-	docker-compose -f docker-compose.dev.yml up -d
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 5
 	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379"
 
 dev-up-local:
 	@echo "Starting development databases (local images)..."
-	docker-compose -f docker-compose.local.yml up -d
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_LOCAL) up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 5
 	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379"
 
 dev-up-pull:
 	@echo "Pulling latest images and starting development databases..."
-	docker-compose -f docker-compose.dev.yml pull
-	docker-compose -f docker-compose.dev.yml up -d
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) pull
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 5
 	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379"
 
 dev-down:
 	@echo "Stopping development databases..."
-	docker-compose -f docker-compose.dev.yml down
-	docker-compose -f docker-compose.local.yml down 2>/dev/null || true
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) down
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_LOCAL) down 2>/dev/null || true
 
 dev-logs:
-	docker-compose -f docker-compose.dev.yml logs -f
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) logs -f
 
 dev-reset:
 	@echo "Resetting all development data..."
-	docker-compose -f docker-compose.dev.yml down -v
-	docker-compose -f docker-compose.dev.yml up -d
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) down -v
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) up -d
 	@echo "Development environment reset complete!"
 
 db-connect:
@@ -97,7 +101,7 @@ install-all: install-backend install-frontend
 status:
 	@echo "Development Environment Status:"
 	@echo "================================"
-	@docker-compose -f docker-compose.dev.yml ps
+	@$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) ps
 	@echo ""
 	@echo "Environment file:"
 	@if [ -f .env ]; then echo "✓ .env exists"; else echo "✗ .env missing (run 'make setup-env')"; fi

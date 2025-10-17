@@ -13,6 +13,12 @@ npm install
 ### 开发环境启动
 
 ```bash
+# 启动依赖服务（Postgres/Redis）
+docker compose -f ../docker-compose.dev.yml up -d postgres redis
+
+# 复制环境变量配置（如已有 .env 可跳过）
+cp .env.example .env
+
 # 开发模式（热重载）
 npm run start:dev
 
@@ -21,6 +27,12 @@ npm start
 
 # 调试模式
 npm run start:debug
+
+# 如需修改监听端口，设置 PORT 环境变量
+PORT=3500 npm run start:dev
+
+# 自定义数据存储目录
+RAW_UPLOADS_ROOT=/path/to/raw_uploads DATASETS_ROOT=/path/to/datasets npm run start:dev
 ```
 
 ### 生产环境
