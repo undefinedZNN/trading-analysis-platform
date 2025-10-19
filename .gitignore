@@ -74,7 +74,6 @@ public/uploads/
 
 # Backend storage
 backend/storage/*
-!backend/storage/raw_uploads/.gitkeep
 
 # 备份文件
 *.backup
