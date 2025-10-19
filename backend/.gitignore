@@ -95,3 +95,6 @@ ecosystem.config.js
 test-results/
 playwright-report/
 test-results.xml
+backend/storage/*
+!backend/storage/datasets/.gitkeep
+!backend/storage/raw_uploads/.gitkeep
