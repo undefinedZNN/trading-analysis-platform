@@ -71,8 +71,9 @@ redis_data/
 uploads/
 public/uploads/
 
+
 # Backend storage
-backend/storage/raw_uploads/*
+backend/storage/*
 !backend/storage/raw_uploads/.gitkeep
 
 # 备份文件
