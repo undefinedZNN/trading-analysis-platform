@@ -1,12 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Card, Table, Button, Space, Modal, message } from 'antd';
-import { ReloadOutlined, FileTextOutlined, RetweetOutlined } from '@ant-design/icons';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Card, Table, Button, Space, message } from 'antd';
+import {
+  ReloadOutlined,
+  FileTextOutlined,
+  RetweetOutlined,
+  PlusCircleOutlined,
+  EyeOutlined,
+} from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { fetchImports, fetchImportLog, retryImport } from '../../../shared/api/tradingData';
+import {
+  fetchImports,
+  retryImport,
+} from '../../../shared/api/tradingData';
 import type { ImportTaskDto } from '../../../shared/api/tradingData';
 import StatusTag from '../../../shared/components/StatusTag';
 import { IMPORT_STATUS_COLORS, IMPORT_STATUS_LABELS } from '../../../shared/constants/status';
 import RetryImportModal from '../components/RetryImportModal';
+import CreateImportModal from '../components/CreateImportModal';
+import ImportDetailDrawer from '../components/ImportDetailDrawer';
+import ImportLogModal from '../components/ImportLogModal';
 
 type ImportListPageProps = {
   onRefreshed?: () => void;
@@ -18,9 +30,12 @@ export function ImportListPage({ onRefreshed }: ImportListPageProps) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState(0);
-  const [logLoading, setLogLoading] = useState(false);
   const [retryLoading, setRetryLoading] = useState(false);
   const [retryTask, setRetryTask] = useState<ImportTaskDto | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailImportId, setDetailImportId] = useState<number | null>(null);
+  const [logImportId, setLogImportId] = useState<number | null>(null);
 
   const load = async (nextPage = page, nextPageSize = pageSize) => {
     setLoading(true);
@@ -44,26 +59,9 @@ export function ImportListPage({ onRefreshed }: ImportListPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleViewLog = async (record: ImportTaskDto) => {
-    setLogLoading(true);
-    try {
-      const log = await fetchImportLog(record.importId);
-      Modal.info({
-        title: `导入任务 #${record.importId} 错误日志`,
-        width: 720,
-        content: (
-          <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto' }}>
-            {log || '暂无错误日志'}
-          </pre>
-        ),
-      });
-    } catch (error) {
-      console.error(error);
-      message.error('获取错误日志失败');
-    } finally {
-      setLogLoading(false);
-    }
-  };
+  const handleViewLog = useCallback((record: ImportTaskDto) => {
+    setLogImportId(record.importId);
+  }, []);
 
   const handleRetry = async (options: { reuseOriginalFile: boolean; file?: File | null }) => {
     if (!retryTask) return;
@@ -138,15 +136,20 @@ export function ImportListPage({ onRefreshed }: ImportListPageProps) {
       {
         title: '操作',
         key: 'actions',
-        width: 220,
+        width: 280,
         render: (_, record) => (
           <Space>
             <Button
               size="small"
-              icon={<FileTextOutlined />}
-              onClick={() => handleViewLog(record)}
-              loading={logLoading}
+              icon={<EyeOutlined />}
+              onClick={() => {
+                setDetailImportId(record.importId);
+                setDetailOpen(true);
+              }}
             >
+              详情
+            </Button>
+            <Button size="small" icon={<FileTextOutlined />} onClick={() => handleViewLog(record)}>
               日志
             </Button>
             <Button
@@ -162,7 +165,7 @@ export function ImportListPage({ onRefreshed }: ImportListPageProps) {
         ),
       },
     ],
-    [logLoading],
+    [handleViewLog],
   );
 
   return (
@@ -171,9 +174,14 @@ export function ImportListPage({ onRefreshed }: ImportListPageProps) {
       bordered={false}
       className="card-section"
       extra={
-        <Button icon={<ReloadOutlined />} onClick={() => load()}>
-          刷新
-        </Button>
+        <Space>
+          <Button type="primary" icon={<PlusCircleOutlined />} onClick={() => setCreateOpen(true)}>
+            新建导入任务
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={() => load()}>
+            刷新
+          </Button>
+        </Space>
       }
     >
       <Table<ImportTaskDto>
@@ -197,6 +205,31 @@ export function ImportListPage({ onRefreshed }: ImportListPageProps) {
         loading={retryLoading}
         onCancel={() => setRetryTask(null)}
         onOk={handleRetry}
+      />
+
+      <CreateImportModal
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        onSuccess={async () => {
+          await load(1, pageSize);
+        }}
+      />
+
+      <ImportDetailDrawer
+        open={detailOpen && detailImportId !== null}
+        importId={detailImportId}
+        onClose={() => {
+          setDetailOpen(false);
+          setDetailImportId(null);
+        }}
+        onViewLog={(id) => setLogImportId(id)}
+        onRefresh={async () => load(page, pageSize)}
+      />
+
+      <ImportLogModal
+        open={logImportId !== null}
+        importId={logImportId}
+        onClose={() => setLogImportId(null)}
       />
     </Card>
   );

@@ -1,11 +1,7 @@
-import { useState } from 'react';
-import {
-  CloudUploadOutlined,
-  OrderedListOutlined,
-  DatabaseOutlined,
-} from '@ant-design/icons';
+import { useMemo, useState } from 'react';
+import { OrderedListOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import AppLayout from './layouts/AppLayout';
-import UploadPage from '../modules/trading-data/pages/UploadPage';
 import ImportListPage from '../modules/trading-data/pages/ImportListPage';
 import DatasetListPage from '../modules/trading-data/pages/DatasetListPage';
 
@@ -16,7 +12,6 @@ const menuItems = [
     children: [
       { key: 'trading-data/datasets', label: '数据集列表', icon: <DatabaseOutlined /> },
       { key: 'trading-data/imports', label: '导入任务', icon: <OrderedListOutlined /> },
-      { key: 'trading-data/upload', label: 'CSV 数据导入', icon: <CloudUploadOutlined /> },
     ],
   },
   {
@@ -29,51 +24,33 @@ const menuItems = [
   },
 ];
 
-function App() {
-  const [activeKey, setActiveKey] = useState('trading-data/upload');
+const metaMap: Record<string, { title: string; description?: string }> = {
+  'trading-data/imports': {
+    title: '导入任务',
+    description: '查看导入进度、错误日志，支持新建与失败重试。',
+  },
+  'trading-data/datasets': {
+    title: '数据集列表',
+    description: '管理清洗后的数据集，可执行软删除与恢复。',
+  },
+};
+
+function AppShell() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [datasetRefreshCounter, setDatasetRefreshCounter] = useState(0);
 
-  const metaMap: Record<string, { title: string; description?: string }> = {
-    'trading-data/upload': {
-      title: 'CSV 数据导入',
-      description: '上传单个文件，系统自动完成格式校验与清洗。',
-    },
-    'trading-data/imports': {
-      title: '导入任务',
-      description: '查看导入进度、错误日志，支持失败重试。',
-    },
-    'trading-data/datasets': {
-      title: '数据集列表',
-      description: '管理清洗后的数据集，可执行软删除与恢复。',
-    },
-  };
+  const activeKey = useMemo(() => {
+    const pathname = location.pathname.replace(/^\/+/, '').replace(/\/+$/, '');
+    const validKeys = menuItems
+      .flatMap((item) => (item?.children ?? []).map((child) => child?.key))
+      .filter((key): key is string => Boolean(key));
+    const matched = validKeys.find((key) => pathname.startsWith(key));
+    return matched ?? 'trading-data/imports';
+  }, [location.pathname]);
 
   const handleMenuSelect = (key: string) => {
-    setActiveKey(key);
-  };
-
-  const renderContent = () => {
-    switch (activeKey) {
-      case 'trading-data/upload':
-        return (
-          <UploadPage
-            onUploaded={() => {
-              setActiveKey('trading-data/imports');
-            }}
-          />
-        );
-      case 'trading-data/imports':
-        return (
-          <ImportListPage
-            onRefreshed={() => {
-              setDatasetRefreshCounter((counter) => counter + 1);
-            }}
-          />
-        );
-      case 'trading-data/datasets':
-      default:
-        return <DatasetListPage key={datasetRefreshCounter} />;
-    }
+    navigate(`/${key}`);
   };
 
   return (
@@ -84,8 +61,33 @@ function App() {
       title={metaMap[activeKey]?.title}
       description={metaMap[activeKey]?.description}
     >
-      {renderContent()}
+      <Routes>
+        <Route
+          path="/trading-data/imports"
+          element={
+            <ImportListPage
+              onRefreshed={() => {
+                setDatasetRefreshCounter((counter) => counter + 1);
+              }}
+            />
+          }
+        />
+        <Route
+          path="/trading-data/datasets"
+          element={<DatasetListPage key={datasetRefreshCounter} />}
+        />
+        <Route path="/" element={<Navigate to="/trading-data/imports" replace />} />
+        <Route path="*" element={<Navigate to="/trading-data/imports" replace />} />
+      </Routes>
     </AppLayout>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppShell />
+    </BrowserRouter>
   );
 }
 

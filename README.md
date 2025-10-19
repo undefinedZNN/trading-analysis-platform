@@ -90,6 +90,9 @@ make dev-logs
 # 重置所有数据（删除数据卷）
 make dev-reset
 
+# 
+make dev-clean-local
+
 # 连接到 PostgreSQL
 make db-connect
 

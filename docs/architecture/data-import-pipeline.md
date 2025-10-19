@@ -12,7 +12,12 @@
 4. **写入存储**：生成 Parquet 文件落盘，并通过 DuckDB 进行查询注册。
 5. **元数据入库**：将数据集描述与导入纪录写入 PostgreSQL，方便检索与运营追踪。
 
-数据一旦清洗完成即视为只读，不支持后续内容修改。
+数据一旦清洗完成即视为只读，不支持对既有时间范围内的数据覆盖和修改，仅允许在时间轴两端追加新的增量数据。
+在前端通过 TradingView 图表查看数据时，后端会基于原始 Parquet 批次按需聚合：
+- 请求的时间粒度需大于等于数据集基础粒度，并为其整数倍；
+- 读取与查询时间范围有交集的所有批次文件；
+- 使用 DuckDB 将高频数据按秒数桶化，取桶内第一条/最大/最小/最后一条记录生成开高低收，成交量求和；
+- 直接返回聚合后的烛线序列，无需额外存储预聚合结果。
 
 ## 插件约定
 
@@ -39,10 +44,10 @@
 
 ### 数据湖存储
 
-- 默认目录：`/datasets/{source-or-unknown}/{trading_pair}/{granularity}/batch_{importId}_{timeStart}_{timeEnd}.csv`（MVP 阶段暂以清洗后的 CSV 存档）。
-- 后续可切换为 Parquet：替换扩展名、引入 Arrow/Arrow2 等写入库，并同步更新 DuckDB 注册逻辑。
-- 无论使用 CSV 还是 Parquet，均需包含完整的时间范围、行数、校验值，保证任务可追溯性。
-- 建议设置 DuckDB 外部表扫描，便于查询与分析；后续可按粒度进行分区优化。
+- 数据统一输出为标准化的 OHLCV 结构（`timestamp`、`open`、`high`、`low`、`close`、`volume` 等扩展字段），并直接写入 Parquet 文件，确保类型约束与列式压缩效果。
+- 存储路径：`/datasets/{source-or-unknown}/{trading_pair}/{granularity}/dt={YYYY-MM-DD}/hour={HH}/batch_{importId}.parquet`。按交易时间做日/小时目录切分，确保大批量导入可以被分片读取；粒度高于小时的场景可保留单文件但仍复用目录规范。
+- 每个批次文件需在元数据中记录时间范围、记录数、校验值（MD5/CRC），保证任务追溯性与数据校验。
+- DuckDB 通过外部表注册访问 Parquet 文件，可在后续按粒度或时间范围做分区优化。
 
 ### PostgreSQL 元数据
 
@@ -98,6 +103,8 @@ CREATE INDEX idx_imports_dataset ON imports (dataset_id);
 ```
 
 `datasets` 记录清洗后数据集的存放位置与统计信息，`labels` 字段承载去重后的自定义标签集合（标签在入库前应去除首尾空格并控制在 25 字以内），并通过 `deleted_at` 字段实现软删除（后续可将 `deleted_at` 置空实现恢复）；`imports` 用于跟踪导入任务状态，同时保留完整错误日志字段与 `metadata` JSONB，用于存放导入表单提交的来源、交易对、时间范围等信息，便于异步清洗流程引用。两张表均预留 `created_by`、`updated_by` 字段，方便未来接入权限与审计能力。
+
+追加写入产生的分片落在新增的 `dataset_batches` 表中，字段包含 `dataset_id`、`import_id`、`path`、`time_start`、`time_end`、`row_count`、`checksum` 及 `created_at`，用于追踪每次追加生成的 Parquet 批次，便于审计与回溯。
 
 > 数据库迁移建议使用 NestJS TypeORM 的 migration 机制统一管理上述表结构与字段调整。
 

@@ -8,6 +8,7 @@ import {
   IsString,
   MaxLength,
   Min,
+  IsNumber,
   ValidateIf,
   ArrayMaxSize,
   ArrayNotEmpty,
@@ -156,4 +157,43 @@ export class UpdateDatasetMetadataDto
   @MaxLength(25, { each: true })
   @ArrayMaxSize(20)
   labels?: string[];
+}
+
+export class AppendDatasetRequestDto {
+  @IsOptional()
+  @IsString()
+  createdBy?: string | null;
+
+  @IsString()
+  @MaxLength(100)
+  pluginName!: string;
+
+  @IsString()
+  @MaxLength(50)
+  pluginVersion!: string;
+}
+
+export class DatasetCandlesQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  resolution?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  from?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  to?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  limit?: number;
 }

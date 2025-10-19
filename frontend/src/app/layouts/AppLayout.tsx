@@ -19,7 +19,7 @@ export function AppLayout({
   menuItems,
   onMenuSelect,
   title = '交易数据管理中心',
-  description = '统一管理 CSV 导入、清洗任务与数据集。',
+  description = '统一管理导入任务与清洗后数据集。',
   children,
 }: AppLayoutProps) {
   return (

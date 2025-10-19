@@ -6,6 +6,10 @@ import { DatasetEntity } from './entities/dataset.entity';
 import { ImportTaskEntity, ImportStatus } from './entities/import-task.entity';
 import { BadRequestException } from '@nestjs/common';
 import { ImportProcessingService } from './services/import-processing.service';
+import { resolveDatasetPath } from '../config/storage.config';
+import { dirname, join } from 'path';
+import { mkdirSync, rmSync, existsSync } from 'fs';
+import { ParquetWriter, ParquetSchema } from 'parquetjs-lite';
 
 type MockRepository<T = any> = Partial<Record<keyof Repository<T>, jest.Mock>>;
 
@@ -18,6 +22,7 @@ const createMockRepository = (): MockRepository => ({
   create: jest.fn(),
   update: jest.fn(),
   createQueryBuilder: jest.fn(),
+  count: jest.fn(),
 });
 
 describe('TradingDataService', () => {
@@ -61,6 +66,10 @@ describe('TradingDataService', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  afterAll(() => {
+    rmSync(resolveDatasetPath('test'), { recursive: true, force: true });
   });
 
   it('更新数据集标签时会去重、裁剪并限制数量', async () => {
@@ -211,5 +220,106 @@ describe('TradingDataService', () => {
       importTask,
       expect.objectContaining({ tradingPair: 'BTC/USDT', granularity: '1m' }),
     );
+  });
+
+  it('按更大粒度聚合 K 线数据', async () => {
+    const relativePath = join(
+      'test',
+      'btc',
+      'usdt',
+      'dt=2022-01-01',
+      'hour=00',
+      'batch_1.parquet',
+    );
+    const absolutePath = resolveDatasetPath(relativePath);
+    mkdirSync(dirname(absolutePath), { recursive: true });
+
+    const rows = [
+      ['2022-01-01T00:00:00Z', 10, 11, 9, 10.5, 1],
+      ['2022-01-01T00:00:01Z', 10.5, 12, 10, 11, 2],
+      ['2022-01-01T00:00:02Z', 11, 11.5, 10.8, 11.2, 3],
+      ['2022-01-01T00:00:03Z', 11.2, 12, 11, 11.8, 4],
+      ['2022-01-01T00:00:04Z', 11.8, 12.5, 11.5, 12, 5],
+      ['2022-01-01T00:00:05Z', 12, 13, 11.8, 12.5, 6],
+    ];
+    const schema = new ParquetSchema({
+      timestamp: { type: 'TIMESTAMP_MILLIS' },
+      open: { type: 'DOUBLE' },
+      high: { type: 'DOUBLE' },
+      low: { type: 'DOUBLE' },
+      close: { type: 'DOUBLE' },
+      volume: { type: 'DOUBLE' },
+    });
+    const writer = await ParquetWriter.openFile(schema, absolutePath);
+    for (const row of rows) {
+      await writer.appendRow({
+        timestamp: new Date(row[0]).getTime(),
+        open: row[1],
+        high: row[2],
+        low: row[3],
+        close: row[4],
+        volume: row[5],
+      });
+    }
+    await writer.close();
+
+    expect(existsSync(absolutePath)).toBe(true);
+
+    const dataset: DatasetEntity = {
+      datasetId: 1,
+      source: 'test',
+      tradingPair: 'BTC/USDT',
+      granularity: '1s',
+      path: 'test/btc/usdt',
+      timeStart: new Date('2022-01-01T00:00:00Z'),
+      timeEnd: new Date('2022-01-01T00:00:05Z'),
+      rowCount: 6,
+      checksum: 'checksum',
+      labels: [],
+      description: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdBy: null,
+      updatedBy: null,
+      deletedAt: null,
+      importTasks: [],
+      batches: [
+        {
+          path: relativePath,
+          datasetId: 1,
+          importId: 999,
+          timeStart: new Date('2022-01-01T00:00:00Z'),
+          timeEnd: new Date('2022-01-01T00:00:05Z'),
+          rowCount: 6,
+          checksum: 'checksum',
+          datasetBatchId: 1,
+          createdAt: new Date(),
+        } as any,
+      ],
+    };
+
+    datasetRepository.findOne!.mockResolvedValue(dataset);
+
+    const result = await service.getDatasetCandles(dataset.datasetId, {
+      resolution: '3s',
+    });
+
+    expect(result.candles).toHaveLength(2);
+    expect(result.candles[0]).toMatchObject({
+      time: Math.floor(new Date('2022-01-01T00:00:00Z').getTime() / 1000),
+      open: 10,
+      high: 12,
+      low: 9,
+      close: 11.2,
+      volume: 6,
+    });
+    expect(result.candles[1]).toMatchObject({
+      time: Math.floor(new Date('2022-01-01T00:00:03Z').getTime() / 1000),
+      open: 11.2,
+      high: 13,
+      low: 11,
+      close: 12.5,
+      volume: 15,
+    });
   });
 });

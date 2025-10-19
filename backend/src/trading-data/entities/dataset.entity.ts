@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 import { BaseAuditEntity } from '../../common/entities/base-audit.entity';
 import { ImportTaskEntity } from './import-task.entity';
+import { DatasetBatchEntity } from './dataset-batch.entity';
 
 const bigIntTransformer = {
   to: (value?: number | null) => value ?? null,
@@ -33,6 +34,7 @@ export class DatasetEntity extends BaseAuditEntity {
   @Column({
     type: 'text',
     nullable: false,
+    name: 'trading_pair',
     comment: '交易对或标的符号，例如 BTC/USDT、AAPL',
   })
   tradingPair!: string;
@@ -47,13 +49,14 @@ export class DatasetEntity extends BaseAuditEntity {
   @Column({
     type: 'text',
     nullable: false,
-    comment: '清洗后 Parquet 文件的相对存储路径',
+    comment: '数据集根目录或主文件的相对路径',
   })
   path!: string;
 
   @Column({
     type: 'timestamptz',
     nullable: false,
+    name: 'time_start',
     comment: '数据集中最早一条记录的时间（UTC）',
   })
   timeStart!: Date;
@@ -61,6 +64,7 @@ export class DatasetEntity extends BaseAuditEntity {
   @Column({
     type: 'timestamptz',
     nullable: false,
+    name: 'time_end',
     comment: '数据集中最新一条记录的时间（UTC）',
   })
   timeEnd!: Date;
@@ -69,6 +73,7 @@ export class DatasetEntity extends BaseAuditEntity {
     type: 'bigint',
     nullable: false,
     transformer: bigIntTransformer,
+    name: 'row_count',
     comment: '数据集中包含的记录条数',
   })
   rowCount!: number;
@@ -98,10 +103,14 @@ export class DatasetEntity extends BaseAuditEntity {
   @DeleteDateColumn({
     type: 'timestamptz',
     nullable: true,
+    name: 'deleted_at',
     comment: '软删除标记时间，NULL 表示有效',
   })
   deletedAt?: Date | null;
 
   @OneToMany(() => ImportTaskEntity, (importTask) => importTask.dataset)
   importTasks?: ImportTaskEntity[];
+
+  @OneToMany(() => DatasetBatchEntity, (batch) => batch.dataset)
+  batches?: DatasetBatchEntity[];
 }

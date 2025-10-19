@@ -3,7 +3,6 @@ import {
   Body,
   Controller,
   Get,
-  Header,
   Param,
   ParseIntPipe,
   Post,
@@ -20,6 +19,7 @@ import {
   UpdateImportStatusDto,
   ListImportsRequestDto,
   RetryImportDto,
+  ImportLogQueryDto,
 } from '../dto/import.dto';
 import { ImportStatus } from '../entities/import-task.entity';
 import {
@@ -173,9 +173,11 @@ export class ImportsController {
   }
 
   @Get(':importId/error-log')
-  @Header('Content-Type', 'text/plain; charset=utf-8')
-  async getErrorLog(@Param('importId', ParseIntPipe) importId: number) {
-    const task = await this.tradingDataService.getImportTask(importId);
-    return task.errorLog ?? '';
+  @ApiOperation({ summary: '获取导入任务错误日志（分页加载）' })
+  async getErrorLog(
+    @Param('importId', ParseIntPipe) importId: number,
+    @Query() query: ImportLogQueryDto,
+  ) {
+    return this.tradingDataService.getImportErrorLogChunk(importId, query);
   }
 }

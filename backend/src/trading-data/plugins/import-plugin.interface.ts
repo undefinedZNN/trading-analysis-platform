@@ -9,6 +9,7 @@ export interface DatasetSummary {
   timeEnd: Date;
   rowCount: number;
   checksum: string;
+  outputPath: string;
 }
 
 export interface ImportPlugin {

@@ -4,11 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { mkdir, rename, rm, writeFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { join, posix as posixPath } from 'path';
 import type { Express } from 'express';
+import * as duckdb from 'duckdb';
 import { DatasetEntity } from './entities/dataset.entity';
 import {
   ImportStatus,
@@ -27,8 +28,13 @@ import type {
 import {
   ListDatasetsQuery,
   UpdateDatasetMetadataPayload,
+  AppendDatasetRequestDto,
+  DatasetCandlesQueryDto,
 } from './dto/dataset.dto';
-import { resolveImportUploadPath } from '../config/storage.config';
+import {
+  resolveImportUploadPath,
+  resolveDatasetPath,
+} from '../config/storage.config';
 import { ImportProcessingService } from './services/import-processing.service';
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -226,6 +232,7 @@ export class TradingDataService {
       status,
       stage: this.resolveStageFromStatus(status),
       createdBy: payload.createdBy ?? null,
+      targetDatasetId: payload.targetDatasetId ?? null,
       // dataset metadata will be persisted post-processing
     });
 
@@ -284,6 +291,10 @@ export class TradingDataService {
     });
     if (!importTask) {
       throw new NotFoundException(`Import ${importId} not found`);
+    }
+
+    if (importTask.targetDatasetId) {
+      throw new BadRequestException('追加任务不支持重试，请重新提交新的追加任务');
     }
 
     if (importTask.status !== ImportStatus.Failed) {
@@ -348,6 +359,26 @@ export class TradingDataService {
     payload: CreateImportTaskDto,
     file: Express.Multer.File,
   ): Promise<ImportTaskEntity> {
+    return this.createImportFromUpload(file, {
+      pluginName: payload.pluginName,
+      pluginVersion: payload.pluginVersion,
+      createdBy: payload.createdBy ?? null,
+      metadata: payload.metadata as ImportMetadataPayload | undefined,
+      status: payload.status ?? ImportStatus.Uploading,
+    });
+  }
+
+  private async createImportFromUpload(
+    file: Express.Multer.File,
+    options: {
+      pluginName: string;
+      pluginVersion: string;
+      createdBy?: string | null;
+      metadata?: ImportMetadataPayload;
+      status?: ImportStatus;
+      targetDataset?: DatasetEntity | null;
+    },
+  ): Promise<ImportTaskEntity> {
     if (!file) {
       throw new BadRequestException('请上传数据文件');
     }
@@ -362,9 +393,7 @@ export class TradingDataService {
 
     const initialStoredPath = posixPath.join(tempKey, safeFileName);
 
-    const normalizedMetadata = this.normalizeMetadata(payload.metadata);
-    payload.metadata = normalizedMetadata;
-
+    const normalizedMetadata = this.normalizeMetadata(options.metadata);
     const metadataPayload: ImportMetadataPayload | undefined = normalizedMetadata
       ? { ...normalizedMetadata }
       : undefined;
@@ -372,11 +401,12 @@ export class TradingDataService {
     let importTask = await this.createImportTask({
       sourceFile: safeFileName,
       storedFilePath: initialStoredPath,
-      pluginName: payload.pluginName,
-      pluginVersion: payload.pluginVersion,
-      status: payload.status ?? ImportStatus.Uploading,
-      createdBy: payload.createdBy ?? null,
+      pluginName: options.pluginName,
+      pluginVersion: options.pluginVersion,
+      status: options.status ?? ImportStatus.Uploading,
+      createdBy: options.createdBy ?? null,
       metadata: metadataPayload,
+      targetDatasetId: options.targetDataset?.datasetId ?? null,
     });
 
     const finalDir = resolveImportUploadPath(String(importTask.importId));
@@ -394,10 +424,52 @@ export class TradingDataService {
     await this.importProcessingService.scheduleProcessing(
       savedTask,
       metadataPayload ?? null,
+      { targetDataset: options.targetDataset ?? null },
     );
 
     return this.importsRepository.findOneOrFail({
       where: { importId: savedTask.importId },
+      relations: ['dataset'],
+    });
+  }
+
+  async appendDataset(
+    datasetId: number,
+    payload: AppendDatasetRequestDto,
+    file?: Express.Multer.File,
+  ): Promise<ImportTaskEntity> {
+    if (!file) {
+      throw new BadRequestException('请上传数据文件');
+    }
+
+    const dataset = await this.datasetsRepository.findOne({
+      where: { datasetId },
+    });
+    if (!dataset) {
+      throw new NotFoundException(`Dataset ${datasetId} not found`);
+    }
+    if (dataset.deletedAt) {
+      throw new BadRequestException('数据集已被软删除，无法追加数据');
+    }
+
+    await this.assertDatasetAvailableForAppend(dataset);
+
+    const metadata: ImportMetadataPayload = {
+      source: dataset.source ?? null,
+      tradingPair: dataset.tradingPair,
+      granularity: dataset.granularity,
+      labels: Array.isArray(dataset.labels) ? [...dataset.labels] : [],
+      description: dataset.description ?? null,
+      timeStart: dataset.timeStart,
+      timeEnd: dataset.timeEnd,
+    };
+
+    return this.createImportFromUpload(file, {
+      pluginName: payload.pluginName,
+      pluginVersion: payload.pluginVersion,
+      createdBy: payload.createdBy ? payload.createdBy.trim() : null,
+      metadata,
+      targetDataset: dataset,
     });
   }
 
@@ -483,6 +555,218 @@ export class TradingDataService {
     return importTask;
   }
 
+  async getImportErrorLogChunk(
+    importId: number,
+    options?: { cursor?: number; limit?: number },
+  ): Promise<{
+    entries: string[];
+    cursor: number;
+    nextCursor: number | null;
+    hasMore: boolean;
+    totalLines: number;
+  }> {
+    const importTask = await this.importsRepository.findOne({
+      where: { importId },
+      select: ['importId', 'errorLog'],
+    });
+    if (!importTask) {
+      throw new NotFoundException(`Import ${importId} not found`);
+    }
+
+    const rawLog = importTask.errorLog ?? '';
+    if (!rawLog.trim()) {
+      return {
+        entries: [],
+        cursor: 0,
+        nextCursor: null,
+        hasMore: false,
+        totalLines: 0,
+      };
+    }
+
+    const lines = rawLog.split(/\r?\n/);
+    if (lines.length && lines[lines.length - 1] === '') {
+      lines.pop();
+    }
+    const totalLines = lines.length;
+    const cursor = Math.min(
+      Math.max(options?.cursor ?? 0, 0),
+      totalLines,
+    );
+    const limit = Math.min(Math.max(options?.limit ?? 100, 1), 1000);
+
+    const remaining = totalLines - cursor;
+    if (remaining <= 0) {
+      return {
+        entries: [],
+        cursor,
+        nextCursor: null,
+        hasMore: false,
+        totalLines,
+      };
+    }
+
+    const take = Math.min(limit, remaining);
+    const sliceStart = totalLines - cursor - take;
+    const sliceEnd = totalLines - cursor;
+    const chunk = lines.slice(sliceStart, sliceEnd).reverse();
+    const nextCursor = cursor + chunk.length;
+
+    return {
+      entries: chunk,
+      cursor,
+      nextCursor: nextCursor < totalLines ? nextCursor : null,
+      hasMore: nextCursor < totalLines,
+      totalLines,
+    };
+  }
+
+  async getDatasetCandles(
+    datasetId: number,
+    query: DatasetCandlesQueryDto,
+  ): Promise<{
+    datasetId: number;
+    symbol: string;
+    granularity: string;
+    resolution: string;
+    from: number;
+    to: number;
+    limit: number;
+    hasMore: boolean;
+    candles: Array<{
+      time: number;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+    }>;
+  }> {
+    const dataset = await this.datasetsRepository.findOne({
+      where: { datasetId },
+      relations: ['batches'],
+    });
+    if (!dataset) {
+      throw new NotFoundException(`Dataset ${datasetId} not found`);
+    }
+
+    const baseResolution = dataset.granularity ?? 'unknown';
+    const baseIntervalSeconds = this.parseResolutionToSeconds(baseResolution);
+
+    const resolution = query.resolution ?? dataset.granularity;
+    const intervalSeconds = this.parseResolutionToSeconds(resolution);
+
+    if (intervalSeconds < baseIntervalSeconds || intervalSeconds % baseIntervalSeconds !== 0) {
+      throw new BadRequestException(
+        `不支持的时间粒度 ${resolution}，需为数据集基础粒度 ${dataset.granularity} 的整数倍`,
+      );
+    }
+
+    const limit = Math.min(query.limit ?? 500, 5000);
+
+    const datasetStart = dataset.timeStart;
+    const datasetEnd = dataset.timeEnd;
+
+    let toDate = query.to ? this.secondsToDate(query.to) : new Date(datasetEnd);
+    if (Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('结束时间参数非法');
+    }
+    if (toDate.getTime() > datasetEnd.getTime()) {
+      toDate = new Date(datasetEnd);
+    }
+
+    let fromDate = query.from ? this.secondsToDate(query.from) : new Date(toDate);
+    if (Number.isNaN(fromDate.getTime())) {
+      throw new BadRequestException('开始时间参数非法');
+    }
+    if (!query.from) {
+      const defaultWindowMs = intervalSeconds * limit * 1000;
+      fromDate = new Date(toDate.getTime() - defaultWindowMs);
+    }
+    if (fromDate.getTime() < datasetStart.getTime()) {
+      fromDate = new Date(datasetStart);
+    }
+    if (fromDate > toDate) {
+      throw new BadRequestException('开始时间需早于结束时间');
+    }
+
+    const relevantBatches = (dataset.batches ?? [])
+      .filter((batch) => {
+        const batchStart = new Date(batch.timeStart).getTime();
+        const batchEnd = new Date(batch.timeEnd).getTime();
+        return batchEnd >= fromDate.getTime() && batchStart <= toDate.getTime();
+      })
+      .sort(
+        (a, b) =>
+          new Date(a.timeStart).getTime() - new Date(b.timeStart).getTime(),
+      );
+
+    let paths = relevantBatches.map((batch) => resolveDatasetPath(batch.path));
+
+    if (!paths.length) {
+      if (dataset.path && dataset.path.endsWith('.parquet')) {
+        paths = [resolveDatasetPath(dataset.path)];
+      }
+    }
+
+    if (!paths.length) {
+      throw new BadRequestException('当前数据集暂无可用的批次文件');
+    }
+
+    const rows = await this.queryCandles({
+      paths,
+      from: fromDate,
+      to: toDate,
+      intervalSeconds,
+      baseIntervalSeconds,
+      limit,
+    });
+
+    const candles = rows.map((row: any) => ({
+      time: Math.floor(Number(row.time)),
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      volume: Number(row.volume ?? 0),
+    }));
+
+    return {
+      datasetId: dataset.datasetId,
+      symbol: dataset.tradingPair,
+      granularity: dataset.granularity,
+      resolution,
+      from: Math.floor(fromDate.getTime() / 1000),
+      to: Math.floor(toDate.getTime() / 1000),
+      limit,
+      hasMore: fromDate.getTime() > datasetStart.getTime(),
+      candles,
+    };
+  }
+
+  private async assertDatasetAvailableForAppend(
+    dataset: DatasetEntity,
+  ): Promise<void> {
+    const blockingStatuses = [
+      ImportStatus.Pending,
+      ImportStatus.Uploading,
+      ImportStatus.Processing,
+    ];
+
+    const activeCount = await this.importsRepository.count({
+      where: [
+        { datasetId: dataset.datasetId, status: In(blockingStatuses) },
+        { targetDatasetId: dataset.datasetId, status: In(blockingStatuses) },
+      ],
+    });
+
+    if (activeCount > 0) {
+      throw new BadRequestException(
+        '当前数据集存在进行中的导入或追加任务，请稍后再试',
+      );
+    }
+  }
+
   private sanitizeLabels(labels: string[]): string[] {
     const sanitized = labels
       .map((label) => (label ?? '').trim())
@@ -525,8 +809,132 @@ export class TradingDataService {
     if (normalized.description === undefined) {
       normalized.description = null;
     }
+    if (normalized.tradingPair === undefined || normalized.tradingPair === null) {
+      normalized.tradingPair = 'unknown';
+    }
+    if (normalized.granularity === undefined || normalized.granularity === null) {
+      normalized.granularity = 'unknown';
+    }
+
+    if (normalized.timeStart) {
+      const parsedStart = new Date(normalized.timeStart as unknown as string);
+      normalized.timeStart = Number.isNaN(parsedStart.getTime()) ? null : parsedStart;
+    }
+
+    if (normalized.timeEnd) {
+      const parsedEnd = new Date(normalized.timeEnd as unknown as string);
+      normalized.timeEnd = Number.isNaN(parsedEnd.getTime()) ? null : parsedEnd;
+    }
 
     return normalized;
+  }
+
+  private secondsToDate(value: number): Date {
+    const date = new Date(value * 1000);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException('时间戳参数非法');
+    }
+    return date;
+  }
+
+  private parseResolutionToSeconds(resolution?: string | null): number {
+    if (!resolution) {
+      throw new BadRequestException('缺少时间粒度参数');
+    }
+    const normalized = resolution.trim().toLowerCase();
+    const match = normalized.match(/^(\d+)([smhd])$/);
+    if (!match) {
+      throw new BadRequestException(`不支持的时间粒度格式: ${resolution}`);
+    }
+    const value = parseInt(match[1], 10);
+    const unit = match[2];
+    const unitMap: Record<string, number> = {
+      s: 1,
+      m: 60,
+      h: 3600,
+      d: 86400,
+    };
+    const unitSeconds = unitMap[unit];
+    if (!unitSeconds) {
+      throw new BadRequestException(`不支持的时间粒度单位: ${unit}`);
+    }
+    return value * unitSeconds;
+  }
+
+  private async queryCandles(params: {
+    paths: string[];
+    from: Date;
+    to: Date;
+    intervalSeconds: number;
+    baseIntervalSeconds: number;
+    limit: number;
+  }): Promise<any[]> {
+    const { paths, from, to, intervalSeconds, baseIntervalSeconds, limit } =
+      params;
+    const escapedPaths = paths.map((p) => `'${this.escapeLiteral(p)}'`).join(', ');
+    const parquetScan = `read_parquet([${escapedPaths}])`;
+    const fromIso = this.escapeLiteral(from.toISOString());
+    const toIso = this.escapeLiteral(to.toISOString());
+    const limitClause = limit ? `LIMIT ${limit}` : '';
+
+    let sql: string;
+    if (intervalSeconds === baseIntervalSeconds) {
+      sql = `
+        SELECT
+          FLOOR(epoch(timestamp)) AS time,
+          open,
+          high,
+          low,
+          close,
+          volume
+        FROM ${parquetScan}
+        WHERE timestamp BETWEEN TIMESTAMP '${fromIso}' AND TIMESTAMP '${toIso}'
+        ORDER BY timestamp
+        ${limitClause};
+      `;
+    } else {
+      sql = `
+        WITH filtered AS (
+          SELECT *,
+            CAST(FLOOR(epoch(timestamp) / ${intervalSeconds}) * ${intervalSeconds} AS BIGINT) AS bucket
+          FROM ${parquetScan}
+          WHERE timestamp BETWEEN TIMESTAMP '${fromIso}' AND TIMESTAMP '${toIso}'
+        )
+        SELECT
+          bucket AS time,
+          arg_min(open, timestamp) AS open,
+          max(high) AS high,
+          min(low) AS low,
+          arg_max(close, timestamp) AS close,
+          sum(volume) AS volume
+        FROM filtered
+        GROUP BY bucket
+        ORDER BY bucket
+        ${limitClause};
+      `;
+    }
+
+    return this.executeDuckDbQuery(sql);
+  }
+
+  private executeDuckDbQuery<T = any>(sql: string): Promise<T[]> {
+    return new Promise<T[]>((resolve, reject) => {
+      const db = new duckdb.Database(':memory:');
+      const connection = db.connect();
+      connection.all(sql, (err, rows) => {
+        connection.close();
+        db.close();
+        if (err) {
+          reject(err);
+        } else {
+          resolve(rows as T[]);
+        }
+      });
+    });
+  }
+
+  private escapeLiteral(value: string): string {
+    return value.replace(/'/g, "''");
   }
 
   private normalizeFileName(fileName: string): string {

@@ -1,5 +1,5 @@
-import { join } from 'path';
-import { writeFileSync, unlinkSync } from 'fs';
+import { join, dirname } from 'path';
+import { writeFileSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { CsvOhlcvPlugin } from './csv-ohlcv.plugin';
 
@@ -25,8 +25,11 @@ describe('CsvOhlcvPlugin', () => {
     expect(summary.timeStart.toISOString()).toBe('2022-12-15T00:00:00.000Z');
     expect(summary.timeEnd.toISOString()).toBe('2022-12-15T00:00:01.000Z');
     expect(summary.checksum).toHaveLength(32);
+    expect(summary.outputPath.endsWith('.parquet')).toBe(true);
+    expect(existsSync(summary.outputPath)).toBe(true);
 
-    unlinkSync(filePath);
+    rmSync(filePath, { force: true });
+    rmSync(dirname(summary.outputPath), { recursive: true, force: true });
   });
 
   it('should throw when header invalid', async () => {
@@ -37,6 +40,6 @@ describe('CsvOhlcvPlugin', () => {
       plugin.process(filePath, { task: { importId: 1 } as any }),
     ).rejects.toThrow('CSV 表头不符合预期');
 
-    unlinkSync(filePath);
+    rmSync(filePath, { force: true });
   });
 });

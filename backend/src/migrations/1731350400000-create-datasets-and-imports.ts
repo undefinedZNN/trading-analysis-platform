@@ -96,14 +96,12 @@ export class CreateDatasetsAndImports1731350400000
           {
             name: 'created_at',
             type: 'timestamptz',
-            default: () => 'CURRENT_TIMESTAMP',
             isNullable: false,
             comment: '记录创建时间',
           },
           {
             name: 'updated_at',
             type: 'timestamptz',
-            default: () => 'CURRENT_TIMESTAMP',
             isNullable: false,
             comment: '记录最近更新时间',
           },
@@ -122,6 +120,12 @@ export class CreateDatasetsAndImports1731350400000
     await queryRunner.query(
       `ALTER TABLE datasets ALTER COLUMN labels SET DEFAULT '[]'::jsonb;`,
     );
+
+    await queryRunner.query(`
+      ALTER TABLE datasets
+      ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP,
+      ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;
+    `);
 
     await queryRunner.query(`
       CREATE INDEX idx_datasets_lookup
@@ -228,7 +232,6 @@ export class CreateDatasetsAndImports1731350400000
           {
             name: 'started_at',
             type: 'timestamptz',
-            default: () => 'CURRENT_TIMESTAMP',
             isNullable: false,
             comment: '任务开始时间',
           },
@@ -241,14 +244,12 @@ export class CreateDatasetsAndImports1731350400000
           {
             name: 'created_at',
             type: 'timestamptz',
-            default: () => 'CURRENT_TIMESTAMP',
             isNullable: false,
             comment: '记录创建时间',
           },
           {
             name: 'updated_at',
             type: 'timestamptz',
-            default: () => 'CURRENT_TIMESTAMP',
             isNullable: false,
             comment: '记录最近更新时间',
           },
@@ -273,9 +274,16 @@ export class CreateDatasetsAndImports1731350400000
     await queryRunner.query(`
       CREATE INDEX idx_imports_status ON imports (status);
     `);
-
+ 
     await queryRunner.query(`
       CREATE INDEX idx_imports_dataset ON imports (dataset_id);
+    `);
+ 
+    await queryRunner.query(`
+      ALTER TABLE imports
+      ALTER COLUMN started_at SET DEFAULT CURRENT_TIMESTAMP,
+      ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP,
+      ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;
     `);
   }
 

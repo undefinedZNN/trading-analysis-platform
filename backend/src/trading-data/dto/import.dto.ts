@@ -35,6 +35,7 @@ export interface CreateImportTaskPayload {
   status?: ImportStatus;
   createdBy?: string | null;
   metadata?: ImportMetadataPayload;
+  targetDatasetId?: number | null;
 }
 
 const parseMetadataInput = ({ value }: { value: unknown }) => {
@@ -205,6 +206,21 @@ export class ListImportsRequestDto implements ListImportsQuery {
   @IsString()
   @MaxLength(100)
   keyword?: string | null;
+}
+
+export class ImportLogQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  cursor?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  limit?: number;
 }
 
 export class RetryImportDto {

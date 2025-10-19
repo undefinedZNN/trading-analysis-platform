@@ -4,7 +4,7 @@ DOCKER_COMPOSE ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker
 COMPOSE_FILE_DEV ?= docker-compose.dev.yml
 COMPOSE_FILE_LOCAL ?= docker-compose.local.yml
 
-.PHONY: help dev-up dev-up-local dev-up-pull dev-down dev-logs dev-reset db-connect redis-connect install-backend install-frontend install-all setup-env status
+.PHONY: help dev-up dev-up-local dev-up-pull dev-down dev-logs dev-reset dev-clean-local dev-check db-connect redis-connect install-backend install-frontend install-all setup-env status
 
 # Default target
 help:
@@ -15,6 +15,8 @@ help:
 	@echo "  dev-up-local    Start with local Docker images (fallback)"
 	@echo "  dev-up-pull     Pull latest images and start"
 	@echo "  dev-down        Stop development databases"
+	@echo "  dev-clean-local Remove local dev containers and volumes"
+	@echo "  dev-check       Verify local development environment status"
 	@echo "  dev-logs        Show database logs"
 	@echo "  dev-reset       Reset all data (removes volumes)"
 	@echo "  db-connect      Connect to PostgreSQL database"
@@ -42,6 +44,36 @@ dev-up-local:
 	@echo "Waiting for services to be ready..."
 	@sleep 5
 	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379"
+
+dev-clean-local:
+	@echo "Cleaning local development environment..."
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_LOCAL) down -v
+	@echo "Local development environment cleaned!"
+
+dev-check:
+	@echo "Checking local development environment (docker-compose.local.yml)..."
+	@$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_LOCAL) ps || true
+	@echo ""
+	@echo "Verifying PostgreSQL connection..."
+	@if docker ps --format '{{.Names}}' | grep -q '^trading-postgres$$'; then \
+		docker exec trading-postgres psql -U trading_user -d trading_analysis -c "SELECT current_user AS user, current_database() AS database;" || echo "✗ PostgreSQL query failed"; \
+	else \
+		echo "✗ trading-postgres container is not running"; \
+	fi
+	@echo ""
+	@echo "Inspecting PostgreSQL environment variables..."
+	@if docker ps --format '{{.Names}}' | grep -q '^trading-postgres$$'; then \
+		docker exec trading-postgres sh -c 'echo POSTGRES_DB=$$POSTGRES_DB; echo POSTGRES_USER=$$POSTGRES_USER'; \
+	else \
+		echo "（跳过，trading-postgres 容器未运行）"; \
+	fi
+	@echo ""
+	@echo "Verifying Redis connection..."
+	@if docker ps --format '{{.Names}}' | grep -q '^trading-redis$$'; then \
+		docker exec trading-redis redis-cli ping || echo "✗ Redis ping failed"; \
+	else \
+		echo "✗ trading-redis container is not running"; \
+	fi
 
 dev-up-pull:
 	@echo "Pulling latest images and starting development databases..."

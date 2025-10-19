@@ -3,10 +3,12 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { BaseAuditEntity } from '../../common/entities/base-audit.entity';
 import { DatasetEntity } from './dataset.entity';
+import { DatasetBatchEntity } from './dataset-batch.entity';
 
 const numericTransformer = {
   to: (value?: number | null) => value ?? 0,
@@ -46,8 +48,23 @@ export class ImportTaskEntity extends BaseAuditEntity {
   dataset?: DatasetEntity | null;
 
   @Column({
+    type: 'integer',
+    name: 'target_dataset_id',
+    nullable: true,
+    comment: '追加写入时的目标数据集 ID',
+  })
+  targetDatasetId?: number | null;
+
+  @ManyToOne(() => DatasetEntity, {
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'target_dataset_id' })
+  targetDataset?: DatasetEntity | null;
+
+  @Column({
     type: 'text',
     nullable: false,
+    name: 'source_file',
     comment: '用户上传的原始文件名',
   })
   sourceFile!: string;
@@ -71,6 +88,7 @@ export class ImportTaskEntity extends BaseAuditEntity {
     type: 'text',
     nullable: false,
     comment: '处理该任务的清洗插件名称',
+    name: 'plugin_name',
   })
   pluginName!: string;
 
@@ -78,6 +96,7 @@ export class ImportTaskEntity extends BaseAuditEntity {
     type: 'text',
     nullable: false,
     comment: '清洗插件版本号',
+    name: 'plugin_version',
   })
   pluginVersion!: string;
 
@@ -139,4 +158,7 @@ export class ImportTaskEntity extends BaseAuditEntity {
     comment: '任务结束时间（成功或失败）',
   })
   finishedAt?: Date | null;
+
+  @OneToMany(() => DatasetBatchEntity, (batch) => batch.importTask)
+  datasetBatches?: DatasetBatchEntity[];
 }
