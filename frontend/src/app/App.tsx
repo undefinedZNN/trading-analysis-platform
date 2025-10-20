@@ -4,6 +4,8 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from
 import AppLayout from './layouts/AppLayout';
 import ImportListPage from '../modules/trading-data/pages/ImportListPage';
 import DatasetListPage from '../modules/trading-data/pages/DatasetListPage';
+import StrategyListPage from '../modules/backtest/pages/StrategyListPage';
+import StrategyDetailPage from '../modules/backtest/pages/StrategyDetailPage';
 
 const menuItems = [
   {
@@ -18,8 +20,8 @@ const menuItems = [
     key: 'backtest',
     label: '策略回测（预留）',
     children: [
-      { key: 'backtest/scripts', label: '脚本管理' },
-      { key: 'backtest/runs', label: '回测记录' },
+      { key: 'backtest/strategies', label: '策略管理' },
+      { key: 'backtest/runs', label: '回测记录（预留）' },
     ],
   },
 ];
@@ -33,6 +35,10 @@ const metaMap: Record<string, { title: string; description?: string }> = {
     title: '数据集列表',
     description: '管理清洗后的数据集，可执行软删除与恢复。',
   },
+};
+metaMap['backtest/strategies'] = {
+  title: '策略管理',
+  description: '在线编辑 TypeScript 策略脚本并管理脚本版本，为回测任务准备配置。',
 };
 
 function AppShell() {
@@ -76,6 +82,8 @@ function AppShell() {
           path="/trading-data/datasets"
           element={<DatasetListPage key={datasetRefreshCounter} />}
         />
+        <Route path="/backtest/strategies" element={<StrategyListPage />} />
+        <Route path="/backtest/strategies/:strategyId" element={<StrategyDetailPage />} />
         <Route path="/" element={<Navigate to="/trading-data/imports" replace />} />
         <Route path="*" element={<Navigate to="/trading-data/imports" replace />} />
       </Routes>

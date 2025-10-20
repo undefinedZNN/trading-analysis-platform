@@ -2,13 +2,14 @@
 
 ## 1. 设计目标
 - 为量化策略提供一致的 TypeScript 开发体验，与平台回测引擎无缝对接。
-- 通过接口继承约束策略生命周期、参数声明、因子注册，确保元数据可追溯。
-- 通过 SDK 封装数据访问、交易账户、指标记录，阻断对底层存储的直接依赖。
+- 所有变量、因子、参数注册在脚本内部完成，无需额外表单或 JSON Schema 配置。
+- 后台直接保存脚本源码文本，版本化管理并可在控制台内编辑。
 
 ## 2. 脚本形态与结构
-- **语言与运行时**：策略脚本使用 TypeScript 编写，平台以 Bun 运行时直接执行，无需预先打包。
+- **语言与运行时**：策略脚本使用 TypeScript 编写，平台以 Bun 运行时直接执行，无需预打包。
 - **入口约定**：脚本导出一个实现 `BacktestStrategyModule` 接口的默认对象或工厂函数。
-- **Manifest**：策略模块可选导出 `manifest` 常量，描述依赖的内置因子、使用的自定义变量、所需的数据源标签，便于平台管理。
+- **在线编辑**：控制台采用 Monaco Editor 呈现和保存脚本；支持创建新版本、编辑已有版本、标记主版本。
+- **Manifest（可选）**：脚本可导出或附带 manifest，用于描述入口文件、依赖、默认标签等元信息，存储为 JSON。
 
 ```ts
 import { defineStrategy } from '@platform/backtest-sdk';
@@ -20,53 +21,26 @@ export default defineStrategy({
     description: '基于重叠度筛选多头信号',
     tags: ['momentum', 'spot'],
   },
-  variables: () => [
-    {
-      name: 'lookback',
-      schema: {
-        type: 'integer',
-        title: '重叠度窗口',
-        minimum: 5,
-        maximum: 200,
-        default: 20,
-        description: '计算历史重叠度的 K 线数量',
-        'x-ui': {
-          widget: 'slider',
-          step: 1,
-        },
-      },
-    },
-    {
-      name: 'minOverlap',
-      schema: {
-        type: 'number',
-        title: '最小重叠度',
-        default: 0.6,
-        minimum: 0,
-        maximum: 1,
-        description: '触发下单所需的最小重叠比率',
-        'x-ui': {
-          widget: 'input-number',
-          precision: 2,
-        },
-      },
-    },
+  variables: ({ types }) => [
+    types.float('lookback', {
+      label: '重叠度窗口',
+      default: 20,
+      min: 5,
+      max: 200,
+    }),
+    types.float('minOverlap', {
+      label: '最小重叠度',
+      default: 0.6,
+      min: 0,
+      max: 1,
+    }),
   ],
-  factors: () => [
+  factors: ({ filters, dataTypes }) => [
     {
       key: 'overlap',
-      schema: {
-        type: 'number',
-        title: '窗口重叠度',
-        description: '最近 lookback 根 K 线的重叠比例',
-        minimum: 0,
-        maximum: 1,
-        'x-filter': {
-          widget: 'range-slider',
-          mode: 'between',
-          precision: 2,
-        },
-      },
+      label: '窗口重叠度',
+      valueType: dataTypes.float,
+      filter: filters.bySymbol(),
     },
   ],
   hooks: {
@@ -98,8 +72,8 @@ export default defineStrategy({
 
 ### 3.1 `BacktestStrategyModule`
 - `meta`：策略元信息（名称、版本、描述、标签、默认市场）用于策略管理模块展示。
-- `variables(builder)`：返回 `VariableDefinition[]`，其中每个定义包含 `name` 与符合 JSON Schema Draft 2020-12 的 `schema`；schema 支持枚举、数值范围、依赖关系以及扩展字段 `x-ui.*`（用于声明前端筛选器类型、默认交互控件、展示分组等）。
-- `factors(builder)`：返回 `FactorDefinition[]`，包含因子 `key`、类型 schema（同样遵循 JSON Schema），以及 `x-filter.*` 扩展，指定前端筛选组件、可选枚举、区间模式与维度映射。
+- `variables(builder)`：返回变量配置集合，SDK 提供便捷的 `types.xxx` 方法声明类型、默认值、校验范围；平台在回测任务配置时自动呈现。
+- `factors(builder)`：返回自定义因子注册，定义因子的 key、展示名、筛选维度等，回测执行时通过 `context.factors.record` 输出。
 - `hooks`：策略生命周期钩子集合，常用包括：
   - `onInit(ctx)`：初始化状态、注册指标。
   - `onBar(payload)`：每个 K 线触发，payload 含 `bar`, `context`。
@@ -127,20 +101,11 @@ export default defineStrategy({
 - 未捕获异常会导致任务失败；SDK 会附带最近日志、参数快照。
 - 支持在 `context.abort('reason')` 下主动请求终止。
 
-### 3.4 JSON Schema 扩展约定
-- `x-ui.widget`：前端控件类型（如 `slider`、`input-number`、`select`、`tag-group`、`date-range`）。
-- `x-ui.filterMode`：筛选语义（`single`、`multiple`、`between`、`relative-range` 等），驱动筛选器行为。
-- `x-ui.datasource`：引用平台保存的枚举/字典数据来源（如交易对列表、市场标签），前端按需懒加载。
-- `x-filter.widget` / `x-filter.mode`：用于因子筛选器，控制结果页的条件构建器。
-- 其余自定义字段以 `x-` 前缀扩展，平台后端会在持久化前做白名单校验，确保兼容性。
-
-## 4. 因子与变量元数据管理
-- 自定义变量与因子元数据会在策略上传时校验并存入策略管理库，形成版本快照。
-- 平台缓存变量/因子的 JSON Schema 与 `x-ui`/`x-filter` 扩展信息，生成控制台表单与结果筛选器配置，并在任务执行时记录 schema 摘要便于回溯。
-- 任务启动时，将变量默认值与用户输入合并，注入 `context.params`；保留参数实例审计记录。
-- 因子定义会同步至回测结果分析模块，用于筛选器、对比视图、导出字段。
-- 运行时生成的因子数据按 `任务ID/因子key/过滤维度` 组织，写入 DuckDB/Parquet；基础指标写入 PostgreSQL。
-- 内置因子库由平台维护，策略可在 manifest 中声明 `builtinFactors: ['triggeredAt', 'holdingDuration', 'overlap5', ...]` 以启用。
+## 4. 因子与变量注册
+- 变量与因子的定义全部在脚本代码中完成，并由 SDK 在任务执行前解析。
+- 回测任务创建时读取脚本最新主版本，将 `variables` 输出为配置表单，`factors` 注册为分析维度。
+- 无需对变量/因子做手工表单编辑，所有变更通过脚本版本迭代进行。
+- 运行中调用 `context.factors.record` 和 `context.metrics.record` 输出数据，平台按任务 ID 和因子 key 建立索引。
 
 ## 5. 开发与调试流程
 - **本地 CLI**：提供 `backtest run --strategy path/to/file.ts --dataset BTC_USDT --from 2023-01-01`，使用相同 SDK 在沙箱数据上调试。
@@ -155,8 +120,8 @@ export default defineStrategy({
 - 变量与因子元数据需通过 schema 验证，避免恶意注入或过大 payload。
 
 ## 7. 未来扩展
-- **多语言运行时**：规划通过 WASM/gRPC 支持 Python/Rust，但统一遵循相同接口规范。
-- **状态持久化**：提供受控的跨任务缓存（如模型权重），需在 manifest 中声明。
-- **更丰富的钩子**：引入 `onDailyClose`, `onSignal`, `onRiskLimit` 等事件。
-- **策略依赖管理**：支持用户声明 NPM 依赖，由平台审核后注入隔离环境。
-- **测试框架**：内置策略单元测试辅助（模拟数据片段、断言指标），提升迭代效率。
+- **静态分析**：保存脚本时自动运行类型检查、lint、依赖审查，阻断不安全脚本。
+- **变量/因子可视化**：解析脚本后在控制台展示变量说明、默认值、返回类型等信息。
+- **脚本差异对比**：支持版本间 diff、评论、审批流程。
+- **多语言脚本**：规划通过 WASM / gRPC 兼容 Python、Rust 等，但仍遵循相同上下文与钩子协议。
+- **测试框架**：提供脚本级 unit test 工具（模拟行情、断言指标），提升研发效率。
