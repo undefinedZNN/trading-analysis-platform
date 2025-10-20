@@ -10,6 +10,7 @@
 - 建立回测任务配置向导，让用户在可视化界面中完成策略回测配置与启动。
 - 输出标准化的回测结果与指标分析，支持多维筛选、对比与导出。
 - 当前阶段聚焦功能闭环，不对资源配额、监控告警等平台能力做深入实现。
+- 相关技术方案详见《[回测系统架构设计](../../architecture/backtesting-system-architecture.md)》与《[回测脚本架构设计](../../architecture/backtesting-script-architecture.md)》。
 
 ## 功能需求
 
@@ -47,6 +48,4 @@
 > 本文为阶段性草稿，后续将根据产品评审与技术评估持续迭代。
 
 
-# 那我们直接开始 回测引擎与脚本定制的讨论吧，有什么问题请及时和我交流
-# 目前交易数据模块已经开发好，数据表实例 在 backend/src/trading-data/entities/dataset.entity.ts， OHLCV交易数据使用 Parquet + duckdb 存储和使用。
 
