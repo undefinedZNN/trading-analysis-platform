@@ -37,7 +37,7 @@
 
 2. **启动开发数据库**
    ```bash
-   # 启动 PostgreSQL 和 Redis
+   # 启动 PostgreSQL、Redis、RabbitMQ
    make dev-up-local
    
    # 检查服务运行状态
@@ -72,6 +72,11 @@
   - 无密码（仅开发环境）
   - 数据库: 0
 
+- **RabbitMQ**: `localhost:5672`（管理控制台 `http://localhost:15672`，默认账号 `dev/devpass`）
+  - 默认虚拟主机：`/backtest`
+  - 用于回测任务编排与队列管理
+  - 默认镜像：`docker.m.daocloud.io/library/rabbitmq:3.12-management`
+
 ### 常用命令
 
 ```bash
@@ -98,6 +103,9 @@ make db-connect
 
 # 连接到 Redis CLI
 make redis-connect
+
+# 查看 RabbitMQ 队列信息
+make rabbitmq-connect
 ```
 
 ## 项目结构

@@ -41,6 +41,30 @@ services:
       timeout: 5s
       retries: 5
 
+  rabbitmq:
+    image: docker.m.daocloud.io/library/rabbitmq:3.12-management
+    pull_policy: if_not_present
+    container_name: trading-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: dev
+      RABBITMQ_DEFAULT_PASS: devpass
+      RABBITMQ_DEFAULT_VHOST: /backtest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - ./infra/rabbitmq/data:/var/lib/rabbitmq
+      - ./infra/rabbitmq/logs:/var/log/rabbitmq
+    networks:
+      - trading-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
 volumes:
   postgres_data:
     driver: local

@@ -11,7 +11,7 @@ help:
 	@echo "Trading Analysis Platform - Development Commands"
 	@echo ""
 	@echo "Database & Services:"
-	@echo "  dev-up          Start development databases (PostgreSQL + Redis)"
+	@echo "  dev-up          Start development databases (PostgreSQL + Redis + RabbitMQ)"
 	@echo "  dev-up-local    Start with local Docker images (fallback)"
 	@echo "  dev-up-pull     Pull latest images and start"
 	@echo "  dev-down        Stop development databases"
@@ -21,6 +21,7 @@ help:
 	@echo "  dev-reset       Reset all data (removes volumes)"
 	@echo "  db-connect      Connect to PostgreSQL database"
 	@echo "  redis-connect   Connect to Redis CLI"
+	@echo "  rabbitmq-connect Connect to RabbitMQ diagnostics shell"
 	@echo ""
 	@echo "Development:"
 	@echo "  install-all     Install dependencies for all projects"
@@ -36,14 +37,14 @@ dev-up:
 	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 5
-	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379"
+	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379, RabbitMQ: localhost:5672 (UI: 15672)"
 
 dev-up-local:
 	@echo "Starting development databases (local images)..."
 	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_LOCAL) up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 5
-	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379"
+	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379, RabbitMQ: localhost:5672 (UI: 15672)"
 
 dev-clean-local:
 	@echo "Cleaning local development environment..."
@@ -74,6 +75,13 @@ dev-check:
 	else \
 		echo "✗ trading-redis container is not running"; \
 	fi
+	@echo ""
+	@echo "Verifying RabbitMQ connection..."
+	@if docker ps --format '{{.Names}}' | grep -q '^trading-rabbitmq$$'; then \
+		docker exec trading-rabbitmq rabbitmq-diagnostics -q ping || echo "✗ RabbitMQ ping failed"; \
+	else \
+		echo "✗ trading-rabbitmq container is not running"; \
+	fi
 
 dev-up-pull:
 	@echo "Pulling latest images and starting development databases..."
@@ -81,7 +89,7 @@ dev-up-pull:
 	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE_DEV) up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 5
-	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379"
+	@echo "Services started! PostgreSQL: localhost:5432, Redis: localhost:6379, RabbitMQ: localhost:5672 (UI: 15672)"
 
 dev-down:
 	@echo "Stopping development databases..."
@@ -102,6 +110,10 @@ db-connect:
 
 redis-connect:
 	docker exec -it trading-redis redis-cli
+
+rabbitmq-connect:
+	docker exec -it trading-rabbitmq rabbitmq-diagnostics -q ping && \
+	docker exec -it trading-rabbitmq rabbitmqctl list_queues name durable messages_ready messages_unacknowledged messages
 
 # Development setup
 setup-env:

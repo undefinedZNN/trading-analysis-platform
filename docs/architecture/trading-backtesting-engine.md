@@ -7,7 +7,34 @@
 ## 2. 关键组件
 - **Task Orchestrator**
   - 接收任务、校验配置、生成任务批次与状态机（排队、运行、完成、失败、取消），并写入调度队列。
-  - 技术建议：基于 NestJS，结合 BullMQ/Redis 管理任务队列与延迟/重试策略。
+  - 技术建议：基于 NestJS，使用 RabbitMQ 管理任务队列、优先级与延迟/重试策略。
+
+### 2.1 任务队列拓扑（RabbitMQ）
+- **Exchange 设计**
+  - `backtest.tasks.exchange`（类型：topic）：接收业务侧提交的任务消息，路由键按策略类型/优先级命名（例如 `strategy.core.high`）。
+  - `backtest.tasks.retry.exchange`（类型：topic，延迟插件/TTL）：处理失败重试，结合死信 TTL 触发回流。
+  - `backtest.tasks.dlx`（类型：topic）：死信交换机，收集多次失败或超时的任务，供运维排查。
+- **Queue 设计**
+  - `backtest.tasks.queue`: 主消费队列，配置 `x-max-priority`=10、`prefetch`=10，绑定路由键 `strategy.*.*`。
+  - `backtest.tasks.retry.queue`: 延迟重试队列，配置 `x-message-ttl`=5s/10s/20s（根据重试次数动态设置），死信目标指向主 exchange。
+  - `backtest.tasks.dlq`: 死信队列，持久化失败记录，触发告警。
+- **状态流转**
+  ```
+  Submitted
+     │ publish(strategy.priority.<level>)
+     ▼
+  backtest.tasks.queue ──► Worker Ack
+     │ Nack w/ requeue=false (on failure)
+     ▼
+  backtest.tasks.retry.exchange ──► backtest.tasks.retry.queue ──(TTL 到期)─► backtest.tasks.exchange
+     │ 重试超过阈值
+     ▼
+  backtest.tasks.dlx ──► backtest.tasks.dlq ──► 告警/人工干预
+  ```
+- **控制参数**
+  - 每个 Worker 进程设置 `prefetch` 控制并发，避免压垮资源。
+  - 使用消息头部记录 `retry-count`，由消费端更新并附带执行用时、错误码。
+  - 管理界面（15672）及 Prometheus exporter（可选插件）用于监控队列长度、拒绝数、连接状态。
 - **Execution Broker**
   - 从队列拉取任务并分配给 Worker 池；维护 Worker 心跳、资源配额、优先级调度与失败重试。
   - 技术建议：封装 `worker_threads`（如使用 Piscina）或 `child_process` 进程池，提供统一监控接口。

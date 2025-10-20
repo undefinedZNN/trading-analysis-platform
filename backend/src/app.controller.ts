@@ -17,6 +17,10 @@ export class AppController {
       example: '欢迎使用交易分析平台 API 🚀'
     }
   })
+  /**
+   * @description 获取欢迎消息
+   * @returns {string} 欢迎消息
+   */
   getHello(): string {
     return this.appService.getHello();
   }

@@ -1,0 +1,13 @@
+{
+  "name": "sandbox-runtime-benchmarks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "node run-benchmarks.js"
+  },
+  "dependencies": {
+    "isolated-vm": "^4.5.0",
+    "vm2": "^3.9.20"
+  }
+}
