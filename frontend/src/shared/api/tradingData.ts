@@ -148,6 +148,9 @@ export async function fetchDatasets(params: ListDatasetsQuery = {}) {
   return data;
 }
 
+// 别名，用于统一命名风格
+export const listDatasets = fetchDatasets;
+
 export async function deleteDataset(datasetId: number, operator?: string) {
   await client.post(`/datasets/${datasetId}/delete`, {
     operator,

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { OrderedListOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { OrderedListOutlined, DatabaseOutlined, ExperimentOutlined, RocketOutlined } from '@ant-design/icons';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { App as AntdApp } from 'antd';
 import AppLayout from './layouts/AppLayout';
@@ -7,6 +7,9 @@ import ImportListPage from '../modules/trading-data/pages/ImportListPage';
 import DatasetListPage from '../modules/trading-data/pages/DatasetListPage';
 import StrategyListPage from '../modules/backtest/pages/StrategyListPage';
 import StrategyDetailPage from '../modules/backtest/pages/StrategyDetailPage';
+import BacktestTaskListPage from '../modules/backtest/pages/BacktestTaskListPage';
+import BacktestTaskDetailPage from '../modules/backtest/pages/BacktestTaskDetailPage';
+import BacktestTaskCreatePage from '../modules/backtest/pages/BacktestTaskCreatePage';
 
 const menuItems = [
   {
@@ -19,10 +22,10 @@ const menuItems = [
   },
   {
     key: 'backtest',
-    label: '策略回测（预留）',
+    label: '策略回测',
     children: [
-      { key: 'backtest/strategies', label: '策略管理' },
-      { key: 'backtest/runs', label: '回测记录（预留）' },
+      { key: 'backtest/strategies', label: '策略管理', icon: <ExperimentOutlined /> },
+      { key: 'backtest/tasks', label: '回测任务', icon: <RocketOutlined /> },
     ],
   },
 ];
@@ -40,6 +43,10 @@ const metaMap: Record<string, { title: string; description?: string }> = {
 metaMap['backtest/strategies'] = {
   title: '策略管理',
   description: '在线编辑 TypeScript 策略脚本并管理脚本版本，为回测任务准备配置。',
+};
+metaMap['backtest/tasks'] = {
+  title: '回测任务',
+  description: '创建、管理和监控回测任务，查看回测结果与性能指标。',
 };
 
 function AppShell() {
@@ -86,6 +93,9 @@ function AppShell() {
           />
           <Route path="/backtest/strategies" element={<StrategyListPage />} />
           <Route path="/backtest/strategies/:strategyId" element={<StrategyDetailPage />} />
+          <Route path="/backtest/tasks" element={<BacktestTaskListPage />} />
+          <Route path="/backtest/tasks/create" element={<BacktestTaskCreatePage />} />
+          <Route path="/backtest/tasks/:taskId" element={<BacktestTaskDetailPage />} />
           <Route path="/" element={<Navigate to="/trading-data/imports" replace />} />
           <Route path="*" element={<Navigate to="/trading-data/imports" replace />} />
         </Routes>
