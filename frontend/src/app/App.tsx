@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { OrderedListOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { App as AntdApp } from 'antd';
 import AppLayout from './layouts/AppLayout';
 import ImportListPage from '../modules/trading-data/pages/ImportListPage';
 import DatasetListPage from '../modules/trading-data/pages/DatasetListPage';
@@ -60,34 +61,36 @@ function AppShell() {
   };
 
   return (
-    <AppLayout
-      activeKey={activeKey}
-      menuItems={menuItems}
-      onMenuSelect={handleMenuSelect}
-      title={metaMap[activeKey]?.title}
-      description={metaMap[activeKey]?.description}
-    >
-      <Routes>
-        <Route
-          path="/trading-data/imports"
-          element={
-            <ImportListPage
-              onRefreshed={() => {
-                setDatasetRefreshCounter((counter) => counter + 1);
-              }}
-            />
-          }
-        />
-        <Route
-          path="/trading-data/datasets"
-          element={<DatasetListPage key={datasetRefreshCounter} />}
-        />
-        <Route path="/backtest/strategies" element={<StrategyListPage />} />
-        <Route path="/backtest/strategies/:strategyId" element={<StrategyDetailPage />} />
-        <Route path="/" element={<Navigate to="/trading-data/imports" replace />} />
-        <Route path="*" element={<Navigate to="/trading-data/imports" replace />} />
-      </Routes>
-    </AppLayout>
+    <AntdApp>
+      <AppLayout
+        activeKey={activeKey}
+        menuItems={menuItems}
+        onMenuSelect={handleMenuSelect}
+        title={metaMap[activeKey]?.title}
+        description={metaMap[activeKey]?.description}
+      >
+        <Routes>
+          <Route
+            path="/trading-data/imports"
+            element={
+              <ImportListPage
+                onRefreshed={() => {
+                  setDatasetRefreshCounter((counter) => counter + 1);
+                }}
+              />
+            }
+          />
+          <Route
+            path="/trading-data/datasets"
+            element={<DatasetListPage key={datasetRefreshCounter} />}
+          />
+          <Route path="/backtest/strategies" element={<StrategyListPage />} />
+          <Route path="/backtest/strategies/:strategyId" element={<StrategyDetailPage />} />
+          <Route path="/" element={<Navigate to="/trading-data/imports" replace />} />
+          <Route path="*" element={<Navigate to="/trading-data/imports" replace />} />
+        </Routes>
+      </AppLayout>
+    </AntdApp>
   );
 }
 

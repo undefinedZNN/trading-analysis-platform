@@ -56,40 +56,12 @@ export class ListStrategiesQueryDto {
   @IsString({ each: true })
   @MaxLength(50, { each: true })
   tags?: string[];
-
-  @IsOptional()
-  @Transform(({ value }) => normalizeStringArray(value))
-  @IsArray()
-  @IsString({ each: true })
-  @MaxLength(50, { each: true })
-  markets?: string[];
 }
 
 export class CreateStrategyDto {
   @IsString()
-  @MaxLength(50)
-  code!: string;
-
-  @IsString()
   @MaxLength(100)
   name!: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(100)
-  team?: string | null;
-
-  @Transform(({ value }) => normalizeStringArray(value) ?? [])
-  @IsArray()
-  @ArrayNotEmpty()
-  @IsString({ each: true })
-  @ArrayMaxSize(20)
-  markets!: string[];
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(20)
-  frequency?: string | null;
 
   @Transform(({ value }) => normalizeStringArray(value) ?? [])
   @IsArray()
@@ -113,24 +85,6 @@ export class UpdateStrategyDto {
   @IsString()
   @MaxLength(100)
   name?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(100)
-  team?: string | null;
-
-  @IsOptional()
-  @Transform(({ value }) => normalizeStringArray(value))
-  @IsArray()
-  @ArrayNotEmpty()
-  @IsString({ each: true })
-  @ArrayMaxSize(20)
-  markets?: string[];
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(20)
-  frequency?: string | null;
 
   @IsOptional()
   @Transform(({ value }) => normalizeStringArray(value))

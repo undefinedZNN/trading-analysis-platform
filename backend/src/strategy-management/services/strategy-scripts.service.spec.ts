@@ -49,7 +49,10 @@ describe('StrategyScriptsService', () => {
   it('creates new script with generated version code', async () => {
     strategyRepo.findOne.mockResolvedValue({
       strategyId: 1,
-      code: 'demo',
+      name: 'Test Strategy',
+      tags: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
     } as StrategyEntity);
     scriptRepo.findOne.mockResolvedValue(null);
     scriptRepo.create.mockImplementation((payload) => payload as StrategyScriptVersionEntity);
@@ -65,7 +68,13 @@ describe('StrategyScriptsService', () => {
   });
 
   it('throws when duplicate version code', async () => {
-    strategyRepo.findOne.mockResolvedValue({ strategyId: 1 } as StrategyEntity);
+    strategyRepo.findOne.mockResolvedValue({
+      strategyId: 1,
+      name: 'Test Strategy',
+      tags: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as StrategyEntity);
     scriptRepo.findOne.mockResolvedValueOnce({ scriptId: 1 } as StrategyScriptVersionEntity);
 
     await expect(

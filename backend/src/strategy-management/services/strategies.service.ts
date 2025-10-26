@@ -27,20 +27,8 @@ export class StrategiesService {
   ) {}
 
   async createStrategy(payload: CreateStrategyDto): Promise<StrategyEntity> {
-    const existing = await this.strategyRepo.findOne({
-      where: { code: payload.code },
-      withDeleted: true,
-    });
-    if (existing) {
-      throw new BadRequestException('策略编码已存在，请更换后重试');
-    }
-
     const strategy = this.strategyRepo.create({
-      code: payload.code.trim(),
       name: payload.name.trim(),
-      team: payload.team?.trim() ?? null,
-      markets: payload.markets,
-      frequency: payload.frequency?.trim() ?? null,
       tags: Array.from(new Set(payload.tags)),
       description: payload.description?.trim() ?? null,
       createdBy: payload.createdBy ?? null,
@@ -61,18 +49,13 @@ export class StrategiesService {
       .where('strategy.deletedAt IS NULL');
 
     if (query.keyword) {
-      qb.andWhere(
-        '(strategy.name ILIKE :keyword OR strategy.code ILIKE :keyword)',
-        { keyword: `%${query.keyword.trim()}%` },
-      );
+      qb.andWhere('(strategy.name ILIKE :keyword)', {
+        keyword: `%${query.keyword.trim()}%`,
+      });
     }
 
     if (query.tags && query.tags.length > 0) {
       qb.andWhere('strategy.tags && :tags', { tags: query.tags });
-    }
-
-    if (query.markets && query.markets.length > 0) {
-      qb.andWhere('strategy.markets && :markets', { markets: query.markets });
     }
 
     qb.orderBy('strategy.createdAt', 'DESC')
@@ -113,15 +96,6 @@ export class StrategiesService {
 
     if (payload.name !== undefined) {
       strategy.name = payload.name.trim();
-    }
-    if (payload.team !== undefined) {
-      strategy.team = payload.team?.trim() ?? null;
-    }
-    if (payload.markets !== undefined) {
-      strategy.markets = payload.markets;
-    }
-    if (payload.frequency !== undefined) {
-      strategy.frequency = payload.frequency?.trim() ?? null;
     }
     if (payload.tags !== undefined) {
       strategy.tags = Array.from(new Set(payload.tags));

@@ -19,14 +19,6 @@ export class StrategyEntity extends BaseAuditEntity {
 
   @Column({
     type: 'text',
-    unique: true,
-    nullable: false,
-    comment: '策略唯一编码，便于 API/CLI 调用',
-  })
-  code!: string;
-
-  @Column({
-    type: 'text',
     nullable: false,
     comment: '策略名称',
   })
@@ -34,33 +26,10 @@ export class StrategyEntity extends BaseAuditEntity {
 
   @Column({
     type: 'text',
-    nullable: true,
-    comment: '归属团队或小组',
-  })
-  team?: string | null;
-
-  @Column({
-    type: 'text',
     array: true,
     nullable: false,
     default: () => 'ARRAY[]::text[]',
-    comment: '适用市场或标的标签集合',
-  })
-  markets!: string[];
-
-  @Column({
-    type: 'text',
-    nullable: true,
-    comment: '交易频率，如 1m、5m、1d',
-  })
-  frequency?: string | null;
-
-  @Column({
-    type: 'text',
-    array: true,
-    nullable: false,
-    default: () => 'ARRAY[]::text[]',
-    comment: '策略标签集合',
+    comment: '策略标签集合，用于分类检索',
   })
   tags!: string[];
 

@@ -7,11 +7,7 @@ const client = axios.create({
 
 export interface StrategyDto {
   strategyId: number;
-  code: string;
   name: string;
-  team?: string | null;
-  markets: string[];
-  frequency?: string | null;
   tags: string[];
   description?: string | null;
   createdAt: string;
@@ -32,15 +28,10 @@ export interface ListStrategiesQuery {
   pageSize?: number;
   keyword?: string | null;
   tags?: string[];
-  markets?: string[];
 }
 
 export interface CreateStrategyPayload {
-  code: string;
   name: string;
-  team?: string | null;
-  markets: string[];
-  frequency?: string | null;
   tags?: string[];
   description?: string | null;
   createdBy?: string | null;
@@ -48,9 +39,6 @@ export interface CreateStrategyPayload {
 
 export interface UpdateStrategyPayload {
   name?: string;
-  team?: string | null;
-  markets?: string[];
-  frequency?: string | null;
   tags?: string[];
   description?: string | null;
   updatedBy?: string | null;

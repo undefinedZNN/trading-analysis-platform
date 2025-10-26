@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
+  App,
   Button,
   Card,
   Descriptions,
   Form,
   Input,
-  message,
   Modal,
   Space,
   Switch,
@@ -22,6 +22,7 @@ import {
   getStrategy,
   getStrategyScript,
   listStrategyScripts,
+  updateStrategy,
   updateStrategyScript,
 } from '../../../shared/api/strategyManagement';
 
@@ -55,7 +56,22 @@ type ScriptFormValues = {
   isPrimary?: boolean;
 };
 
+type StrategyFormValues = {
+  name: string;
+  tags?: string;
+  description?: string;
+};
+
+function normalizeCommaList(input?: string): string[] {
+  if (!input) return [];
+  return input
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 const StrategyDetailPage: React.FC = () => {
+  const { message } = App.useApp();
   const { strategyId } = useParams<{ strategyId: string }>();
   const navigate = useNavigate();
   const [strategy, setStrategy] = useState<StrategyDto | null>(null);
@@ -66,7 +82,10 @@ const StrategyDetailPage: React.FC = () => {
   const [modalMode, setModalMode] = useState<ScriptModalMode>('create');
   const [editorValue, setEditorValue] = useState<string>(SCRIPT_TEMPLATE);
   const [modalSubmitting, setModalSubmitting] = useState(false);
+  const [strategyModalOpen, setStrategyModalOpen] = useState(false);
+  const [strategyFormSubmitting, setStrategyFormSubmitting] = useState(false);
   const [form] = Form.useForm<ScriptFormValues>();
+  const [strategyForm] = Form.useForm<StrategyFormValues>();
 
   const numericStrategyId = useMemo(() => {
     const parsed = Number(strategyId);
@@ -228,7 +247,38 @@ const StrategyDetailPage: React.FC = () => {
     } finally {
       setModalSubmitting(false);
     }
-  }, [numericStrategyId, form, modalMode, editorValue, activeScript, loadScripts]);
+  }, [numericStrategyId, form, modalMode, editorValue, activeScript, loadScripts, message]);
+
+  const openStrategyEditModal = useCallback(() => {
+    if (!strategy) return;
+    strategyForm.setFieldsValue({
+      name: strategy.name,
+      tags: strategy.tags.join(', '),
+      description: strategy.description || undefined,
+    });
+    setStrategyModalOpen(true);
+  }, [strategy, strategyForm]);
+
+  const handleStrategyFormSubmit = useCallback(async () => {
+    if (!numericStrategyId) return;
+    try {
+      const values = await strategyForm.validateFields();
+      setStrategyFormSubmitting(true);
+      await updateStrategy(numericStrategyId, {
+        name: values.name.trim(),
+        tags: normalizeCommaList(values.tags),
+        description: values.description?.trim() || undefined,
+      });
+      message.success('策略更新成功');
+      setStrategyModalOpen(false);
+      await loadStrategy();
+    } catch (error) {
+      console.error(error);
+      message.error('更新策略失败，请稍后再试');
+    } finally {
+      setStrategyFormSubmitting(false);
+    }
+  }, [numericStrategyId, strategyForm, loadStrategy, message]);
 
   const activeManifest = useMemo(() => {
     if (!activeScript?.manifest) return '-';
@@ -260,26 +310,21 @@ const StrategyDetailPage: React.FC = () => {
       <Card
         title="策略概览"
         extra={
-          <Button onClick={() => navigate('/backtest/strategies')}>
-            返回策略列表
-          </Button>
+          <Space>
+            <Button onClick={openStrategyEditModal}>
+              编辑策略
+            </Button>
+            <Button onClick={() => navigate('/backtest/strategies')}>
+              返回策略列表
+            </Button>
+          </Space>
         }
       >
         {strategy ? (
           <Descriptions column={2} bordered size="small">
             <Descriptions.Item label="策略 ID">{strategy.strategyId}</Descriptions.Item>
-            <Descriptions.Item label="策略编码">{strategy.code}</Descriptions.Item>
             <Descriptions.Item label="策略名称">{strategy.name}</Descriptions.Item>
-            <Descriptions.Item label="团队">{strategy.team || '-'}</Descriptions.Item>
-            <Descriptions.Item label="交易频率">{strategy.frequency || '-'}</Descriptions.Item>
-            <Descriptions.Item label="市场">
-              <Space wrap>
-                {strategy.markets?.map((item) => (
-                  <Tag key={item}>{item}</Tag>
-                ))}
-              </Space>
-            </Descriptions.Item>
-            <Descriptions.Item label="标签">
+            <Descriptions.Item label="标签" span={2}>
               <Space wrap>
                 {strategy.tags?.length
                   ? strategy.tags.map((tag) => (
@@ -388,6 +433,38 @@ const StrategyDetailPage: React.FC = () => {
             }}
           />
         </Space>
+      </Modal>
+
+      <Modal
+        title="编辑策略"
+        open={strategyModalOpen}
+        onCancel={() => {
+          setStrategyModalOpen(false);
+          strategyForm.resetFields();
+        }}
+        onOk={handleStrategyFormSubmit}
+        confirmLoading={strategyFormSubmitting}
+        destroyOnClose
+        width={600}
+      >
+        <Form<StrategyFormValues> form={strategyForm} layout="vertical">
+          <Form.Item
+            name="name"
+            label="策略名称"
+            rules={[
+              { required: true, message: '请输入策略名称' },
+              { max: 100, message: '名称长度不能超过 100 个字符' },
+            ]}
+          >
+            <Input placeholder="例如：趋势跟踪策略" />
+          </Form.Item>
+          <Form.Item name="tags" label="标签">
+            <Input placeholder="多个以逗号分隔，如 趋势,期货" />
+          </Form.Item>
+          <Form.Item name="description" label="策略说明">
+            <Input.TextArea rows={4} showCount maxLength={1000} placeholder="描述策略的交易逻辑和适用场景" />
+          </Form.Item>
+        </Form>
       </Modal>
     </Space>
   );

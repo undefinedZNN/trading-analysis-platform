@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  App,
   Button,
   Card,
   Form,
   Input,
-  message,
   Modal,
+  Select,
   Space,
   Table,
   Tag,
@@ -17,10 +18,12 @@ import {
   createStrategy,
   deleteStrategy,
   listStrategies,
+  updateStrategy,
 } from '../../../shared/api/strategyManagement';
 
 type StrategyFilters = {
   keyword?: string;
+  tags?: string[];
 };
 
 function normalizeCommaList(input?: string): string[] {
@@ -31,17 +34,29 @@ function normalizeCommaList(input?: string): string[] {
     .filter((item) => item.length > 0);
 }
 
-const StrategyCreateModal: React.FC<{
+const StrategyFormModal: React.FC<{
   open: boolean;
-  onOk: (values: StrategyCreateFormValues) => Promise<void>;
+  mode: 'create' | 'edit';
+  initialValues?: StrategyFormValues;
+  onOk: (values: StrategyFormValues) => Promise<void>;
   onCancel: () => void;
   confirmLoading?: boolean;
-}> = ({ open, onOk, onCancel, confirmLoading }) => {
-  const [form] = Form.useForm<StrategyCreateFormValues>();
+}> = ({ open, mode, initialValues, onOk, onCancel, confirmLoading }) => {
+  const [form] = Form.useForm<StrategyFormValues>();
+
+  useEffect(() => {
+    if (open && initialValues) {
+      form.setFieldsValue({
+        name: initialValues.name,
+        tags: initialValues.tags,
+        description: initialValues.description,
+      });
+    }
+  }, [open, initialValues, form]);
 
   return (
     <Modal
-      title="创建策略"
+      title={mode === 'create' ? '创建策略' : '编辑策略'}
       open={open}
       onCancel={() => {
         form.resetFields();
@@ -58,18 +73,9 @@ const StrategyCreateModal: React.FC<{
       }}
       confirmLoading={confirmLoading}
       destroyOnClose
+      width={600}
     >
-      <Form<StrategyCreateFormValues> form={form} layout="vertical">
-        <Form.Item
-          name="code"
-          label="策略编码"
-          rules={[
-            { required: true, message: '请输入策略编码' },
-            { max: 50, message: '编码长度不能超过 50 个字符' },
-          ]}
-        >
-          <Input placeholder="例如 ma-crossover-long" />
-        </Form.Item>
+      <Form<StrategyFormValues> form={form} layout="vertical">
         <Form.Item
           name="name"
           label="策略名称"
@@ -78,60 +84,37 @@ const StrategyCreateModal: React.FC<{
             { max: 100, message: '名称长度不能超过 100 个字符' },
           ]}
         >
-          <Input />
-        </Form.Item>
-        <Form.Item name="team" label="团队">
-          <Input placeholder="可选，例如 alpha-team" />
-        </Form.Item>
-        <Form.Item
-          name="markets"
-          label="适用市场"
-          rules={[
-            {
-              validator: (_, value) => {
-                const normalized = normalizeCommaList(value);
-                return normalized.length === 0
-                  ? Promise.reject(new Error('请至少填写一个市场标识'))
-                  : Promise.resolve();
-              },
-            },
-          ]}
-        >
-          <Input placeholder="多个以逗号分隔，如 crypto:spot,us:equity" />
-        </Form.Item>
-        <Form.Item name="frequency" label="交易频率">
-          <Input placeholder="如 1m、5m、1d" />
+          <Input placeholder="例如：趋势跟踪策略" />
         </Form.Item>
         <Form.Item name="tags" label="标签">
-          <Input placeholder="多个以逗号分隔，如 momentum,alpha" />
+          <Input placeholder="多个以逗号分隔，如 趋势,期货" />
         </Form.Item>
         <Form.Item name="description" label="策略说明">
-          <Input.TextArea rows={3} showCount maxLength={1000} />
+          <Input.TextArea rows={4} showCount maxLength={1000} placeholder="描述策略的交易逻辑和适用场景" />
         </Form.Item>
       </Form>
     </Modal>
   );
 };
 
-type StrategyCreateFormValues = {
-  code: string;
+type StrategyFormValues = {
   name: string;
-  team?: string;
-  markets?: string;
-  frequency?: string;
   tags?: string;
   description?: string;
 };
 
 const StrategyListPage: React.FC = () => {
+  const { modal, message } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<StrategyDto[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState(0);
   const [filters, setFilters] = useState<StrategyFilters>({});
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [formModalOpen, setFormModalOpen] = useState(false);
+  const [formModalMode, setFormModalMode] = useState<'create' | 'edit'>('create');
+  const [editingStrategy, setEditingStrategy] = useState<StrategyDto | null>(null);
+  const [formSubmitting, setFormSubmitting] = useState(false);
   const [form] = Form.useForm<StrategyFilters>();
   const navigate = useNavigate();
 
@@ -143,6 +126,7 @@ const StrategyListPage: React.FC = () => {
           page: nextPage,
           pageSize: nextPageSize,
           keyword: nextFilters.keyword?.trim(),
+          tags: nextFilters.tags || undefined,
         });
         setData(res.items);
         setTotal(res.total);
@@ -155,7 +139,7 @@ const StrategyListPage: React.FC = () => {
         setLoading(false);
       }
     },
-    [page, pageSize, filters],
+    [page, pageSize, filters, message],
   );
 
   useEffect(() => {
@@ -167,6 +151,7 @@ const StrategyListPage: React.FC = () => {
     const values = form.getFieldsValue();
     const nextFilters: StrategyFilters = {
       keyword: values.keyword?.trim(),
+      tags: values.tags,
     };
     setFilters(nextFilters);
     fetchData(1, pageSize, nextFilters);
@@ -179,35 +164,53 @@ const StrategyListPage: React.FC = () => {
     fetchData(1, pageSize, nextFilters);
   }, [form, fetchData, pageSize]);
 
-  const handleCreateStrategy = useCallback(
-    async (values: StrategyCreateFormValues) => {
-      setCreateSubmitting(true);
+  const handleFormSubmit = useCallback(
+    async (values: StrategyFormValues) => {
+      setFormSubmitting(true);
       try {
-        await createStrategy({
-          code: values.code.trim(),
-          name: values.name.trim(),
-          team: values.team?.trim() || undefined,
-          markets: normalizeCommaList(values.markets),
-          frequency: values.frequency?.trim() || undefined,
-          tags: normalizeCommaList(values.tags),
-          description: values.description?.trim() || undefined,
-        });
-        message.success('策略创建成功');
-        setCreateModalOpen(false);
+        if (formModalMode === 'create') {
+          await createStrategy({
+            name: values.name.trim(),
+            tags: normalizeCommaList(values.tags),
+            description: values.description?.trim() || undefined,
+          });
+          message.success('策略创建成功');
+        } else if (editingStrategy) {
+          await updateStrategy(editingStrategy.strategyId, {
+            name: values.name.trim(),
+            tags: normalizeCommaList(values.tags),
+            description: values.description?.trim() || undefined,
+          });
+          message.success('策略更新成功');
+        }
+        setFormModalOpen(false);
+        setEditingStrategy(null);
         await fetchData(1, pageSize, filters);
       } catch (error) {
         console.error(error);
-        message.error('创建策略失败，请检查输入或稍后再试');
+        message.error(formModalMode === 'create' ? '创建策略失败，请检查输入或稍后再试' : '更新策略失败，请稍后再试');
       } finally {
-        setCreateSubmitting(false);
+        setFormSubmitting(false);
       }
     },
-    [fetchData, pageSize, filters],
+    [formModalMode, editingStrategy, fetchData, pageSize, filters, message],
   );
+
+  const handleOpenCreate = useCallback(() => {
+    setFormModalMode('create');
+    setEditingStrategy(null);
+    setFormModalOpen(true);
+  }, []);
+
+  const handleOpenEdit = useCallback((record: StrategyDto) => {
+    setFormModalMode('edit');
+    setEditingStrategy(record);
+    setFormModalOpen(true);
+  }, []);
 
   const handleDelete = useCallback(
     async (record: StrategyDto) => {
-      Modal.confirm({
+      modal.confirm({
         title: '确认删除策略？',
         content: `删除后可在后端数据库恢复，但平台将不可见（策略ID: ${record.strategyId}）`,
         okText: '删除',
@@ -225,8 +228,20 @@ const StrategyListPage: React.FC = () => {
         },
       });
     },
-    [fetchData, page, pageSize, filters],
+    [modal, fetchData, page, pageSize, filters],
   );
+
+  const availableTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    data.forEach((strategy) => {
+      strategy.tags.forEach((tag) => {
+        if (tag.trim()) {
+          tagSet.add(tag);
+        }
+      });
+    });
+    return Array.from(tagSet).sort();
+  }, [data]);
 
   const columns: ColumnsType<StrategyDto> = useMemo(
     () => [
@@ -236,46 +251,14 @@ const StrategyListPage: React.FC = () => {
         width: 100,
       },
       {
-        title: '策略编码',
-        dataIndex: 'code',
-        width: 140,
-      },
-      {
         title: '策略名称',
         dataIndex: 'name',
-        width: 160,
-      },
-      {
-        title: '团队',
-        dataIndex: 'team',
-        width: 150,
-        render: (value?: string | null) => value || '-',
-      },
-      {
-        title: '适用市场',
-        dataIndex: 'markets',
         width: 200,
-        render: (markets: string[]) =>
-          markets?.length ? (
-            <Space wrap size={[4, 4]}>
-              {markets.map((item) => (
-                <Tag key={item}>{item}</Tag>
-              ))}
-            </Space>
-          ) : (
-            '-'
-          ),
-      },
-      {
-        title: '频率',
-        dataIndex: 'frequency',
-        width: 100,
-        render: (value?: string | null) => value || '-',
       },
       {
         title: '标签',
         dataIndex: 'tags',
-        width: 200,
+        width: 250,
         render: (tags: string[]) =>
           tags?.length ? (
             <Space wrap size={[4, 4]}>
@@ -290,6 +273,19 @@ const StrategyListPage: React.FC = () => {
           ),
       },
       {
+        title: '策略说明',
+        dataIndex: 'description',
+        width: 300,
+        ellipsis: true,
+        render: (value?: string | null) => value || '-',
+      },
+      {
+        title: '创建时间',
+        dataIndex: 'createdAt',
+        width: 180,
+        render: (value: string) => new Date(value).toLocaleString(),
+      },
+      {
         title: '更新时间',
         dataIndex: 'updatedAt',
         width: 180,
@@ -298,11 +294,14 @@ const StrategyListPage: React.FC = () => {
       {
         title: '操作',
         fixed: 'right',
-        width: 200,
+        width: 260,
         render: (_, record) => (
           <Space>
             <Button size="small" onClick={() => navigate(`/backtest/strategies/${record.strategyId}`)}>
-              查看
+              查看详情
+            </Button>
+            <Button size="small" type="primary" onClick={() => handleOpenEdit(record)}>
+              编辑
             </Button>
             <Button
               size="small"
@@ -315,14 +314,14 @@ const StrategyListPage: React.FC = () => {
         ),
       },
     ],
-    [handleDelete, navigate],
+    [handleDelete, handleOpenEdit, navigate],
   );
 
   return (
     <Card
       title="策略列表"
       extra={
-        <Button type="primary" onClick={() => setCreateModalOpen(true)}>
+        <Button type="primary" onClick={handleOpenCreate}>
           创建策略
         </Button>
       }
@@ -336,9 +335,19 @@ const StrategyListPage: React.FC = () => {
       >
         <Form.Item name="keyword">
           <Input.Search
-            placeholder="根据名称或编码搜索"
+            placeholder="根据策略名称搜索"
             allowClear
             onSearch={handleSearch}
+            style={{ width: 250 }}
+          />
+        </Form.Item>
+        <Form.Item name="tags">
+          <Select
+            mode="multiple"
+            placeholder="筛选标签"
+            allowClear
+            style={{ minWidth: 200 }}
+            options={availableTags.map((tag) => ({ label: tag, value: tag }))}
           />
         </Form.Item>
         <Form.Item>
@@ -366,11 +375,24 @@ const StrategyListPage: React.FC = () => {
           },
         }}
       />
-      <StrategyCreateModal
-        open={createModalOpen}
-        confirmLoading={createSubmitting}
-        onCancel={() => setCreateModalOpen(false)}
-        onOk={handleCreateStrategy}
+      <StrategyFormModal
+        open={formModalOpen}
+        mode={formModalMode}
+        initialValues={
+          editingStrategy
+            ? {
+                name: editingStrategy.name,
+                tags: editingStrategy.tags.join(', '),
+                description: editingStrategy.description || undefined,
+              }
+            : undefined
+        }
+        confirmLoading={formSubmitting}
+        onCancel={() => {
+          setFormModalOpen(false);
+          setEditingStrategy(null);
+        }}
+        onOk={handleFormSubmit}
       />
     </Card>
   );
