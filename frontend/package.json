@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
+    "@antv/g2plot": "^2.4.35",
     "@monaco-editor/react": "^4.7.0",
     "antd": "^5.27.5",
     "axios": "^1.12.2",
