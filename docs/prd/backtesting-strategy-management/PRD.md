@@ -4,6 +4,8 @@
 - 《交易数据管理模块 PRD》：`docs/prd/trading-data-management/trading-data-management-prd.md`
 - 交易脚本 SDK 设计（待补充）：`docs/architecture/strategy-sdk.md`（预留）
 - 回测系统架构设计文档（待重写）
+- 策略管理功能需求细化：`docs/prd/backtesting-strategy-management/strategy-management-detail.md`
+- 交易回测模块开发计划：`docs/prd/backtesting-strategy-management/backtesting-module-development-plan.md`
 
 ## 背景
 现有平台已经完成交易数据管理模块，支持统一导入与维护高质量的 OHLCV 历史数据。下一阶段需要建设交易回测模块，提供策略脚本管理、回测任务调度执行以及回测结果可视化分析的全链路能力。目标是在初始阶段就确保策略脚本可控、回测任务可追踪、回测结果包含逐笔交易与交易因子，以便后续扩展因子分析和多任务对比。
@@ -51,11 +53,12 @@
 
 ## 功能需求概述
 
-### 策略管理
+### 策略管理 `docs/prd/backtesting-strategy-management/strategy-management-detail.md`
 - 策略列表：分页展示策略名称、描述、创建时间、最近更新的脚本版本号、`master` 版本标记、最近回测任务状态。
 - 策略详情：
   - 查看脚本版本列表，支持按创建时间排序。
   - 每次保存脚本即自动生成一个新的脚本版本记录，无需单独创建操作。
+  - 系统默认按照时间戳生成版本号（如 `v20240501.1`），用户可在保存后修改版本号，需符合命名规范（例如 `v1.1`、`v2.0.3`），避免与历史版本重复。
   - 新建脚本版本或复制已有版本；复制时可选择是否继承参数/因子 Schema。
   - 设置某个脚本版本为 `master`（需二次确认）。
   - 查看脚本版本差异（源码对比 + Schema 对比）。
