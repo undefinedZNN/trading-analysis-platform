@@ -118,7 +118,7 @@ export default function DatasetChartDrawer({ open, dataset, onClose }: DatasetCh
       setRange(null);
       setResolution(undefined);
     }
-  }, [open, dataset]);
+  }, [open, dataset, datasetStart, datasetEnd]);
 
   const renderChart = useCallback(() => {
     if (!chartContainerRef.current) {
