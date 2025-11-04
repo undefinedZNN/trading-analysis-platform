@@ -22,6 +22,8 @@ export interface StrategyVersionSummary {
   parameterSchema?: unknown;
   factorSchema?: unknown;
   lastReferencedAt?: string | null;
+  createdBy?: string | null;
+  updatedBy?: string | null;
 }
 
 export interface StrategySummary {

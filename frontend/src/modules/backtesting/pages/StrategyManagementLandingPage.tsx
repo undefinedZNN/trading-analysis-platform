@@ -91,16 +91,71 @@ const normalizeField = (value: unknown): SchemaField => {
   };
 };
 
-const renderFieldDiffTable = (
-  title: string,
-  fields: SchemaField[],
-) => (
-  <SchemaPreview
-    title={title}
-    parameters={fields}
-    factors={[]}
-  />
-);
+const mapSchemaFields = (value: unknown): SchemaField[] =>
+  Array.isArray(value)
+    ? (value as Array<unknown>)
+        .map((item) => normalizeField(item))
+        .filter((field) => field.key)
+    : [];
+
+const summarizeField = (field: SchemaField) => {
+  const tokens = [
+    field.label,
+    field.type,
+    field.component,
+    field.required ? '必填' : undefined,
+  ].filter(Boolean);
+  return tokens.length ? tokens.join(' / ') : field.key || '—';
+};
+
+const renderSchemaDefaultValue = (value: unknown) => {
+  if (value === undefined || value === null || value === '') {
+    return <Text type="secondary">—</Text>;
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+};
+
+const schemaDiffColumns: ColumnsType<SchemaField> = [
+  {
+    title: '字段 key',
+    dataIndex: 'key',
+    key: 'key',
+    width: 160,
+  },
+  {
+    title: '名称',
+    dataIndex: 'label',
+    key: 'label',
+    ellipsis: true,
+    render: (value?: string) => value || <Text type="secondary">—</Text>,
+  },
+  {
+    title: '类型',
+    dataIndex: 'type',
+    key: 'type',
+    width: 100,
+  },
+  {
+    title: '组件',
+    dataIndex: 'component',
+    key: 'component',
+    width: 120,
+  },
+  {
+    title: '默认值',
+    dataIndex: 'defaultValue',
+    key: 'defaultValue',
+    ellipsis: true,
+    render: renderSchemaDefaultValue,
+  },
+];
 
 type ChangedField = {
   key: string;
@@ -120,14 +175,14 @@ const changedFieldColumns: ColumnsType<ChangedField> = [
     dataIndex: 'before',
     key: 'before',
     ellipsis: true,
-    render: (field: SchemaField) => field.label ?? field.type ?? field.component ?? '—',
+    render: (field: SchemaField) => summarizeField(field),
   },
   {
     title: '新值',
     dataIndex: 'after',
     key: 'after',
     ellipsis: true,
-    render: (field: SchemaField) => field.label ?? field.type ?? field.component ?? '—',
+    render: (field: SchemaField) => summarizeField(field),
   },
 ];
 
@@ -651,6 +706,60 @@ function StrategyManagementLandingPage() {
     );
   };
 
+  const renderSchemaDiffSection = (
+    title: string,
+    records: Array<Record<string, unknown>>,
+  ) => {
+    const fields = mapSchemaFields(records);
+    return (
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Text strong>{title}</Text>
+        {fields.length ? (
+          <Table<SchemaField>
+            rowKey={(field) => field.key || `${title}`}
+            columns={schemaDiffColumns}
+            dataSource={fields}
+            pagination={false}
+            size="small"
+          />
+        ) : (
+          <Text type="secondary">无</Text>
+        )}
+      </Space>
+    );
+  };
+
+  const renderChangedDiffSection = (
+    title: string,
+    records: Array<{ before: Record<string, unknown>; after: Record<string, unknown> }>,
+  ) => {
+    const rows: ChangedField[] = records.map((item, index) => ({
+      key:
+        String(
+          (item.after?.key ?? item.before?.key ?? `${index}`) as string,
+        ) || `${index}`,
+      before: normalizeField(item.before),
+      after: normalizeField(item.after),
+    }));
+
+    return (
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Text strong>{title}</Text>
+        {rows.length ? (
+          <Table<ChangedField>
+            rowKey={(row) => row.key}
+            columns={changedFieldColumns}
+            dataSource={rows}
+            pagination={false}
+            size="small"
+          />
+        ) : (
+          <Text type="secondary">无</Text>
+        )}
+      </Space>
+    );
+  };
+
   const versionColumns = useMemo<ColumnsType<StrategyVersionSummary>>(() => {
     const strategyId = strategyDetail?.strategyId ?? selectedStrategyId ?? '';
     const hasMultipleVersions = (strategyDetail?.scriptVersions.length ?? 0) > 1;
@@ -673,6 +782,20 @@ function StrategyManagementLandingPage() {
         render: (value?: string | null) => value || <Text type="secondary">—</Text>,
       },
       {
+        title: '创建人',
+        dataIndex: 'createdBy',
+        key: 'createdBy',
+        render: (value?: string | null) => value || <Text type="secondary">—</Text>,
+      },
+      {
+        title: '创建时间',
+        dataIndex: 'createdAt',
+        key: 'createdAt',
+        render: (value: string) => dayjs(value).format(DATE_FORMAT),
+        sorter: (a, b) =>
+          dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf(),
+      },
+      {
         title: '更新时间',
         dataIndex: 'updatedAt',
         key: 'updatedAt',
@@ -680,6 +803,13 @@ function StrategyManagementLandingPage() {
         sorter: (a, b) =>
           dayjs(a.updatedAt).valueOf() - dayjs(b.updatedAt).valueOf(),
         defaultSortOrder: 'descend',
+      },
+      {
+        title: '最近引用',
+        dataIndex: 'lastReferencedAt',
+        key: 'lastReferencedAt',
+        render: (value?: string | null) =>
+          value ? dayjs(value).format(DATE_FORMAT) : <Text type="secondary">—</Text>,
       },
       {
         title: '参数字段',
@@ -935,6 +1065,7 @@ function StrategyManagementLandingPage() {
                 expandable={{
                   expandedRowRender: (record) => (
                     <SchemaPreview
+                      title={`字段详情（${record.versionName}）`}
                       parameters={normalizeSchemaFields(record.parameterSchema)}
                       factors={normalizeSchemaFields(record.factorSchema)}
                     />
@@ -1198,20 +1329,48 @@ function StrategyManagementLandingPage() {
                 </Card>
 
                 <Card size="small" title="参数字段差异">
-                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                    <Text>新增：{diffData.parameterDiff.added.length}</Text>
-                    <Text>删除：{diffData.parameterDiff.removed.length}</Text>
-                    <Text>修改：{diffData.parameterDiff.changed.length}</Text>
+                  <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                    <Space direction="vertical" size={4}>
+                      <Text>新增：{diffData.parameterDiff.added.length}</Text>
+                      <Text>删除：{diffData.parameterDiff.removed.length}</Text>
+                      <Text>修改：{diffData.parameterDiff.changed.length}</Text>
+                    </Space>
+                    {renderSchemaDiffSection(
+                      '新增参数字段',
+                      diffData.parameterDiff.added,
+                    )}
+                    {renderSchemaDiffSection(
+                      '删除参数字段',
+                      diffData.parameterDiff.removed,
+                    )}
+                    {renderChangedDiffSection(
+                      '修改参数字段',
+                      diffData.parameterDiff.changed,
+                    )}
                   </Space>
                 </Card>
 
-              <Card size="small" title="因子字段差异">
-                <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                  <Text>新增：{diffData.factorDiff.added.length}</Text>
-                  <Text>删除：{diffData.factorDiff.removed.length}</Text>
-                  <Text>修改：{diffData.factorDiff.changed.length}</Text>
-                </Space>
-              </Card>
+                <Card size="small" title="因子字段差异">
+                  <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                    <Space direction="vertical" size={4}>
+                      <Text>新增：{diffData.factorDiff.added.length}</Text>
+                      <Text>删除：{diffData.factorDiff.removed.length}</Text>
+                      <Text>修改：{diffData.factorDiff.changed.length}</Text>
+                    </Space>
+                    {renderSchemaDiffSection(
+                      '新增因子字段',
+                      diffData.factorDiff.added,
+                    )}
+                    {renderSchemaDiffSection(
+                      '删除因子字段',
+                      diffData.factorDiff.removed,
+                    )}
+                    {renderChangedDiffSection(
+                      '修改因子字段',
+                      diffData.factorDiff.changed,
+                    )}
+                  </Space>
+                </Card>
 
                 <SchemaPreview
                   title={`基准版本字段（${diffData.baseVersion.versionName}）`}

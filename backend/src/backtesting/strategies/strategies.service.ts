@@ -18,6 +18,10 @@ import { generateVersionName } from '../utils/version.util';
 import { StrategyScriptParser } from './strategy-script.parser';
 import { diffLines, diffFieldArray } from '../utils/diff.util';
 import { DiffScriptVersionDto } from './dto/diff-script-version.dto';
+import {
+  ScriptValidationMessage,
+  StrategyScriptValidator,
+} from './strategy-script.validator';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;
@@ -30,6 +34,7 @@ export class StrategiesService {
     @InjectRepository(ScriptVersionEntity)
     private readonly scriptVersionRepository: Repository<ScriptVersionEntity>,
     private readonly scriptParser: StrategyScriptParser,
+    private readonly scriptValidator: StrategyScriptValidator,
   ) {}
 
   async listStrategies(query: ListStrategiesDto) {
@@ -137,6 +142,8 @@ export class StrategiesService {
       parameterSchema: version.parameterSchema,
       factorSchema: version.factorSchema,
       lastReferencedAt: version.lastReferencedAt,
+      createdBy: version.createdBy,
+      updatedBy: version.updatedBy,
     };
   }
 
@@ -172,6 +179,8 @@ export class StrategiesService {
         createdAt: version.createdAt,
         updatedAt: version.updatedAt,
         lastReferencedAt: version.lastReferencedAt,
+        createdBy: version.createdBy,
+        updatedBy: version.updatedBy,
       })),
     };
   }
@@ -273,7 +282,8 @@ export class StrategiesService {
 
     const updatePayload: Partial<ScriptVersionEntity> = {};
 
-    if (dto.code) {
+    if (dto.code !== undefined) {
+      await this.ensureScriptValid(dto.code);
       const schemas = this.scriptParser.parse(dto.code);
       updatePayload.code = dto.code;
       updatePayload.parameterSchema = schemas.parameters;
@@ -416,6 +426,8 @@ export class StrategiesService {
       throw new BadRequestException('脚本代码不能为空');
     }
 
+    await this.ensureScriptValid(dto.code);
+
     const schemas = this.scriptParser.parse(dto.code);
 
     const version = this.scriptVersionRepository.create({
@@ -447,6 +459,31 @@ export class StrategiesService {
     }
 
     return version;
+  }
+
+  private async ensureScriptValid(code: string) {
+    const validation = await this.scriptValidator.validate(code);
+    if (validation.errors.length) {
+      throw new BadRequestException(
+        validation.errors.map((item) =>
+          this.formatValidationMessage(item),
+        ),
+      );
+    }
+  }
+
+  private formatValidationMessage(message: ScriptValidationMessage) {
+    const prefix =
+      message.type === 'typescript'
+        ? 'TypeScript'
+        : message.ruleId
+        ? `ESLint(${message.ruleId})`
+        : 'ESLint';
+    const location =
+      message.line && message.column
+        ? ` [${message.line}:${message.column}]`
+        : '';
+    return `${prefix}${location}: ${message.message}`;
   }
 
   private async setMasterVersion(

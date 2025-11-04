@@ -5,8 +5,13 @@ import { StrategiesService } from './strategies.service';
 import { StrategyEntity } from '../entities/strategy.entity';
 import { ScriptVersionEntity } from '../entities/script-version.entity';
 import { StrategyScriptParser } from './strategy-script.parser';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { DiffScriptVersionDto } from './dto/diff-script-version.dto';
+import { StrategyScriptValidator } from './strategy-script.validator';
 
 type MockRepository<T = any> = Partial<Record<keyof Repository<T>, jest.Mock>> & {
   createQueryBuilder?: jest.Mock;
@@ -47,6 +52,7 @@ describe('StrategiesService', () => {
   let strategyRepository: MockRepository<StrategyEntity>;
   let scriptVersionRepository: MockRepository<ScriptVersionEntity>;
   let parser: StrategyScriptParser;
+  let validator: StrategyScriptValidator;
 
   const parserResult = {
     parameters: [
@@ -75,6 +81,15 @@ describe('StrategiesService', () => {
           provide: StrategyScriptParser,
           useValue: { parse: jest.fn().mockReturnValue(parserResult) },
         },
+        {
+          provide: StrategyScriptValidator,
+          useValue: {
+            validate: jest.fn().mockResolvedValue({
+              errors: [],
+              warnings: [],
+            }),
+          },
+        },
       ],
     }).compile();
 
@@ -86,6 +101,7 @@ describe('StrategiesService', () => {
       getRepositoryToken(ScriptVersionEntity),
     ) as MockRepository<ScriptVersionEntity>;
     parser = module.get(StrategyScriptParser);
+    validator = module.get(StrategyScriptValidator);
 
     strategyRepository.save!.mockImplementation(async (entity) => {
       const persisted = entity as StrategyEntity;
@@ -242,6 +258,53 @@ describe('StrategiesService', () => {
     ).rejects.toThrow(ConflictException);
   });
 
+  it('创建脚本版本前执行脚本校验', async () => {
+    strategyRepository.exist!.mockResolvedValue(true);
+    scriptVersionRepository.find!.mockResolvedValueOnce([]);
+    strategyRepository.findOne!.mockResolvedValue({
+      strategyId: 'strategy-1',
+      name: '均线策略',
+      description: null,
+      tags: [],
+      defaultScriptVersionId: 'version-1',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as StrategyEntity);
+
+    await service.createScriptVersion('strategy-1', {
+      code: 'export default {} as any',
+    });
+
+    expect(validator.validate).toHaveBeenCalledWith(
+      'export default {} as any',
+    );
+  });
+
+  it('脚本校验失败时阻止创建脚本版本', async () => {
+    strategyRepository.exist!.mockResolvedValue(true);
+    scriptVersionRepository.find!.mockResolvedValueOnce([]);
+    (validator.validate as jest.Mock).mockResolvedValueOnce({
+      errors: [
+        {
+          type: 'typescript',
+          severity: 'error',
+          message: '语法错误',
+          line: 1,
+          column: 1,
+        },
+      ],
+      warnings: [],
+    });
+
+    await expect(
+      service.createScriptVersion('strategy-1', {
+        code: 'export default {} as any',
+      }),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(parser.parse).not.toHaveBeenCalled();
+  });
+
   it('更新脚本版本代码时重新解析 Schema', async () => {
     strategyRepository.findOne!.mockResolvedValue({
       strategyId: 'strategy-1',
@@ -269,6 +332,9 @@ describe('StrategiesService', () => {
       setMaster: true,
     });
 
+    expect(validator.validate).toHaveBeenCalledWith(
+      'export default {} as any',
+    );
     expect(parser.parse).toHaveBeenCalledWith('export default {} as any');
     expect(scriptVersionRepository.update).toHaveBeenCalledWith(
       'version-1',

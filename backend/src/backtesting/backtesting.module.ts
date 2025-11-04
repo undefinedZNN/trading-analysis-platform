@@ -7,11 +7,22 @@ import { ScriptVersionEntity } from './entities/script-version.entity';
 import { StrategiesController } from './strategies/strategies.controller';
 import { StrategiesService } from './strategies/strategies.service';
 import { StrategyScriptParser } from './strategies/strategy-script.parser';
+import { StrategyScriptValidator } from './strategies/strategy-script.validator';
 
 @Module({
   imports: [TypeOrmModule.forFeature([StrategyEntity, ScriptVersionEntity])],
   controllers: [BacktestingController, StrategiesController],
-  providers: [BacktestingService, StrategiesService, StrategyScriptParser],
-  exports: [BacktestingService, StrategiesService, StrategyScriptParser],
+  providers: [
+    BacktestingService,
+    StrategiesService,
+    StrategyScriptParser,
+    StrategyScriptValidator,
+  ],
+  exports: [
+    BacktestingService,
+    StrategiesService,
+    StrategyScriptParser,
+    StrategyScriptValidator,
+  ],
 })
 export class BacktestingModule {}
