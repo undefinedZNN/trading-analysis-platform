@@ -1,126 +1,132 @@
-## 6. 执行撮合层细化
+## 9. 交易账簿与日志层细化
 
-### 6.1 核心职责
-- 管理订单生命周期：接收策略指令（风控放行后）、生成内部订单对象、跟踪状态变化。
-- 基于行情事件模拟撮合，处理市价、限价、止损、止盈等订单，并注入滑点、手续费、内部条件。
-- 生成 `execution.report`、`portfolio.update`、`ledger.record` 等事件，反馈成交结果与仓位变化。
-- 支持撤单、TIF（GTC/IOC/FOK）、内部止损触发，与事件总线联合实现暂停/恢复时的状态快照。
+### 9.1 核心职责
+- 汇总事件总线中的执行、风控、策略日志与指标，形成结构化账簿与复盘数据。
+- 按会话组织存储（Parquet+Arrow+JSON），为“交易结果分析”模块、可视化仪表盘和离线研究提供数据。
+- 提供索引与查询接口，将交易与事件时间线、特征、风控记录关联，实现可追溯分析。
+- 与快照/恢复流程协同，保证中断后数据的一致性与增量写入。
 
-### 6.2 数据结构与订单生命周期
+### 9.2 事件订阅与管道
+- 订阅事件类型：
+  - `execution.report`：成交、撤单、部分成交信息；
+  - `portfolio.update`：账户余额、仓位、权益曲线；
+  - `risk.decision`：风控判定、拒单、强平动作；
+  - `ledger.record`：逐笔交易记录（撮合层产出）；
+  - `strategy.log` / `strategy.metric`：策略日志与指标；
+  - `control`：回测启动、暂停、快照、结束等控制事件。
+- 管道流程：
+  1. 接收事件→归一化→缓冲；
+  2. 根据事件类型写入相应 ledger 表（批量写 Parquet）；
+  3. 同步写入 JSONL 或 Arrow IPC 文件供实时查看；
+  4. 更新内存索引（哈希/skip list）以支持快速查询。
+- 支持实时推送（用于前端监控）与离线批处理（会话结束时落盘）。
+
+### 9.3 数据模型
 
 ```typescript
-type OrderType = 'market' | 'limit' | 'stop' | 'stop-limit';
-type OrderStatus =
-  | 'pending'
-  | 'new'
-  | 'partially_filled'
-  | 'filled'
-  | 'cancelled'
-  | 'rejected'
-  | 'expired';
-
-interface OrderEntry {
-  orderId: string;
+interface TradeLedgerRow {
+  sessionId: string;
+  tradeId: string;
   intentId: string;
+  fillId: string;
   strategyId: string;
   symbol: string;
   side: 'buy' | 'sell';
-  type: OrderType;
-  tif: 'GTC' | 'IOC' | 'FOK';
-  limitPrice?: string;
-  stopPrice?: string;
   quantity: string;
-  remaining: string;
-  createdAt: string;
-  status: OrderStatus;
-  metadata?: Record<string, unknown>; // 内部止损/风控标记等
+  price: string;
+  pnl: string;
+  fee?: string;
+  liquidity?: 'maker' | 'taker';
+  features?: Record<string, string | number>;
+  sequenceId: string;
+  timestamp: string;
 }
 
-interface OrderBookState {
-  activeOrders: Map<string, OrderEntry>;
-  restingBids: OrderEntry[];    // 按价格/时间排序
-  restingAsks: OrderEntry[];
-  triggeredQueue: OrderEntry[]; // 等待执行的触发单
-}
-```
-
-- 生命周期：
-  1. `strategy.intent` → 创建 `OrderEntry`（status=`new`），发送初始 `execution.report`。
-  2. 行情事件驱动撮合 → 更新 `remaining`、`status`，生成相应 `execution.report`。
-  3. 处理撤单/过期 → 将状态置为 `cancelled`/`expired` 并产生回报。
-  4. 订单完成后从 `activeOrders` 移除并记录到账簿。
-
-### 6.3 撮合流程
-- **市价单**：按当前 bar 的成交价格执行，可配置基准价（`open`/`close`/`mid`）并应用滑点。
-- **限价单**：判断 `limitPrice` 是否在 bar 的高低范围内，触及时根据成交策略计算价格。
-- **止损/止盈**：当 bar 触及 `stopPrice` 或内部阈值时，将订单转入 `triggeredQueue`，按市价或限价执行。
-- **部分成交 & TIF**：
-  - 未完全成交的订单在 `remaining > 0` 时保留；`IOC` 自动撤掉剩余；`FOK` 若无法一次到底则整体撤单。
-- **内部条件**：支持内部止损（例如固定回撤）、时间到期等条件；触发时生成反向订单或直接输出平仓回报。
-
-### 6.4 滑点与手续费模型
-
-```typescript
-interface SlippageModel {
-  apply(input: {
-    basePrice: string;
-    side: 'buy' | 'sell';
-    quantity: string;
-    liquidity: 'maker' | 'taker';
-  }): string;
-}
-
-interface FeeModel {
-  compute(input: {
-    price: string;
-    quantity: string;
-    side: 'buy' | 'sell';
-    liquidity: 'maker' | 'taker';
-  }): { amount: string; asset: string };
-}
-```
-
-- 两个模型通过依赖注入提供，默认实现支持固定点差、按比例手续费。未来可扩展分层滑点、交易所费率等。
-- 成交回报中写入 `fills.fee` 与 `fills.liquidity`，供账簿和绩效分析使用。
-
-### 6.5 事件生成与仓位同步
-- 每次成交/撤单都会发 `execution.report`，字段沿用第 4 章 schema。
-- 撮合层同步计算仓位/余额变化，生成 `portfolio.update` 更新策略视角的账户状态。
-- 对成交写入 `ledger.record`（含 `tradeId`、`intentId`、`pnl`、`fees`、`factors`、`sequenceId`）供结果分析和二次复盘。
-
-### 6.6 撤单与异常处理
-- 撤单指令结构：
-
-```typescript
-interface CancelInstruction {
-  strategyId: string;
+interface OrderLedgerRow {
+  sessionId: string;
   intentId: string;
+  orderId: string;
+  status: OrderStatus;
+  quantity: string;
+  filled: string;
+  remaining: string;
+  price?: string;
+  tif?: string;
   reason?: string;
+  sequenceId: string;
+  timestamp: string;
+}
+
+interface AccountSnapshotRow {
+  sessionId: string;
+  timestamp: string;
+  equity: string;
+  cash: string;
+  marginUsage: string;
+  positions: Record<string, PositionSnapshot>;
+  drawdown?: string;
+}
+
+interface RiskEventRow {
+  sessionId: string;
+  strategyId: string;
+  intentId?: string;
+  ruleId: string;
+  decision: RiskDecisionType;
+  reasonCode?: string;
+  severity?: 'info' | 'warn' | 'error';
+  followUp?: Record<string, unknown>;
+  sequenceId: string;
+  timestamp: string;
+}
+
+interface StrategyLogRow {
+  sessionId: string;
+  strategyId: string;
+  level: 'debug' | 'info' | 'warn' | 'error';
+  message: string;
+  extra?: Record<string, unknown>;
+  sequenceId: string;
+  timestamp: string;
 }
 ```
 
-- 撮合层查找 `OrderEntry` 更新状态并广播 `execution.report`（status=`cancelled`）。
-- 撮合过程中异常（如价格非法、模型报错）转化为 `DeadLetterEvent` 并将对应订单标记为 `rejected`，同时在日志中记录原因。
+- 所有行包含 `sessionId`、`sequenceId`、`timestamp` 用于联查；必要时额外存 `runId` 或 `batchId`。
+- `features` 字段引用 `feature_catalog.parquet`，存当时的特征快照，支持深度分析。
 
-### 6.7 状态快照与恢复
+### 9.4 存储布局
+- 会话目录结构（示例 `/backtests/{sessionId}/`）：
+  - `trade_ledger.parquet`
+  - `order_ledger.parquet`
+  - `account_snapshots.parquet`
+  - `risk_events.parquet`
+  - `strategy_logs.jsonl` / `strategy_logs.parquet`
+  - `strategy_metrics.parquet`
+  - `feature_catalog.parquet` & `featureCatalog.json`
+  - `event_timeline.parquet`（可选，存控制/风控关键事件）
+- 写入策略：
+  - 事件实时落入内存缓冲（Arrow Table），定时或定量 flush 成 Parquet；
+  - 使用 DuckDB/Arrow 直接查询 Parquet，无需额外导入；
+  - JSONL 用于快速预览（日志），也方便前端分页加载。
 
-```typescript
-interface ExecutionSnapshot {
-  orders: OrderEntry[];
-  triggeredQueue: OrderEntry[];
-  lastProcessedSeq: string;
-}
-```
+### 9.5 查询与接口
+- 对外提供查询接口/工具：
+  - `listTrades(filter)`：支持按 symbol、时间区间、PnL 区间筛选；
+  - `getTradeContext(tradeId)`：返回交易关联的 `TradeLedgerRow`＋周边 `OrderLedgerRow`＋相关 `RiskEventRow`＋`StrategyLogRow`；
+  - `getPnLCurve()`：从 `account_snapshots` 生成权益曲线；
+  - `exportLogs(level, range)`：按级别与时间导出策略日志。
+- 分析模块可直接使用 DuckDB SQL 查询 Parquet，或通过 REST/gRPC API 获取数据。
+- 允许将结果导出为 CSV/JSON/Arrow，根据用户需求。
 
-- 与事件总线快照协同：暂停时序列化当前订单簿、触发队列和最近处理的事件序号；恢复时重建状态并从 `lastProcessedSeq` 之后继续撮合。
-- 必要时对 `triggeredQueue` 立即重评估（防止重复触发或漏执行）。
+### 9.6 与快照/恢复协同
+- 快照写入时记录 ledger 最新 `sequenceId` 与 flush 状态（是否还有未写磁盘的事件）。
+- 恢复时，从 `eventStoreCheckpoint` 继续消费事件，同时确保 ledger 不重复写入（可根据 `sequenceId` 去重）。
+- 对于进行中的会话，可选择“增量写 + 回放补齐”策略：先将未落盘的事件回放再继续正常运行。
 
-### 6.8 一期简化策略
-- 初期可采用简化规则以加快交付：
-  - 市价单按 `bar.open` 成交，施加固定滑点；
-  - 限价单只判断是否触及，不模拟订单簿排队；
-  - 手续费固定费率，内部止损先支持简单阈值；
-  - 不实现复杂队列优先级和成交深度模拟，但保留接口以便后续升级。
-- 文档明确这些取舍，确保后续迭代能平滑切换到更真实的撮合模型。
+### 9.7 一期实现范围
+- 实现上述 Parquet 表结构，提供基础查询/导出功能；
+- 与策略日志、指标事件打通，确保所有重要事件可追踪；
+- 提供简单 CLI/脚本用于查看交易列表、PnL、风控记录；
+- 后续可扩展高级分析（如交易标签、因子贡献、可视化面板）或实时订阅接口。
 
 如需调整或扩展以上共识，请继续补充。框架方案的进一步细化将以此为基线。

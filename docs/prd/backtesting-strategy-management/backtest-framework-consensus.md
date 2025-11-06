@@ -552,27 +552,30 @@ interface StrategyLifecycle {
 - `onAuxStream` 用于处理辅助时间框架事件（如原始 1s 数据）。
 
 ### 5.2 策略声明（Manifest）
-- 策略通过清单声明自身依赖，编排层据此配置数据层与事件订阅。
+- 策略元信息（Manifest）不再存于独立文件，而是保存在数据库中，字段示例：
 
-```typescript
-interface StrategyManifest {
-  id: string;
-  version: string;
-  name: string;
-  description?: string;
-  author?: string;
-  requiredTimeframe: Timeframe;
-  auxStreams?: Array<{ streamId: string; timeframe: Timeframe }>;
-  featureDeps?: string[];                 // 依赖的特征 ID
-  dataDeps?: Array<{ symbol: string; market?: string }>;
-  initialCapital?: string;
-  leverage?: string;
-  parametersSchema?: StrategyParamSchema; // 用于前端配置的 JSON schema
-  warmupBars?: number;                    // 需要的预热长度
+```json
+{
+  "strategyId": "mean-reversion",
+  "name": "Mean Reversion Demo",
+  "version": "1.0.0",
+  "description": "Simple mean reversion on 5m bars.",
+  "author": "Quant Team",
+  "requiredTimeframe": "5m",
+  "auxStreams": [],
+  "featureDeps": ["MA20", "MA50"],
+  "dataDeps": [{"symbol": "BTC-USDT"}],
+  "defaultParameters": {
+    "entryThreshold": 1.5,
+    "exitThreshold": 0.5,
+    "quantity": "0.1"
+  },
+  "warmupBars": 20
 }
 ```
 
-- `parametersSchema` 借助 JSON Schema 定义策略参数（类型、默认值、约束），方便前端渲染配置表单。
+- 保存脚本时，后端将 Manifest 字段与脚本文本一并写入数据库；回测启动时编排层读取 Manifest+脚本组合成 `StrategyConfig` 供沙箱使用。
+- 参数 Schema（若需要更严格校验）也存于数据库，对应 `defaultParameters` 的 JSON Schema。
 
 ### 5.3 策略上下文 API
 
@@ -626,6 +629,194 @@ interface StrategySnapshot {
   - 在沙箱回调周围加超时监控与异常捕获，防止单次处理阻塞整个回测；
   - 记录策略执行耗时、内存指标，超阈触发警告或暂停，作为后续迭代的数据依据。
 - 架构上仍旧保留未来迁移到 Worker/VM2 的接口（例如所有上下文通信都走消息封装），二期可以直接替换底层实现而无需改动策略代码。
+
+### 5.7 脚本结构与导出约定
+- 每个策略脚本存储在数据库中（单文件 TypeScript/JavaScript 字符串），保存时一并提交元信息与脚本文本。
+- 脚本需导出：
+  - `default`：实现 `StrategyLifecycle` 的对象；
+  - `parameters`（可选）：通过 `defineParameters` 定义的参数集合；
+  - `customFeatures`（可选）：通过 `defineFeatures` 定义的自定义特征数组。
+- 推荐模板：
+
+```typescript
+import { StrategyLifecycle, defineParameters, defineFeatures } from '@platform/backtest';
+import { map, withLatestFrom } from 'rxjs/operators';
+
+export const parameters = defineParameters({
+  entryThreshold: {
+    type: 'number',
+    title: '入场阈值（σ）',
+    default: 1.5,
+    minimum: 0,
+    maximum: 5,
+    'x-component': 'Slider',
+    'x-component-props': { step: 0.1, marks: { 0: '0σ', 5: '5σ' } },
+    'x-validator': [{ minimum: 0 }, { maximum: 5 }]
+  },
+  positionSize: {
+    type: 'string',
+    title: '开仓数量',
+    default: '0.1',
+    pattern: '^[0-9]+(\\.[0-9]+)?$',
+    'x-component': 'InputNumber'
+  },
+  tradeSide: {
+    type: 'string',
+    title: '交易方向',
+    enum: [
+      { label: '只做多', value: 'long' },
+      { label: '只做空', value: 'short' },
+      { label: '双向', value: 'both' }
+    ],
+    default: 'both',
+    'x-component': 'Select'
+  },
+  enableStopLoss: {
+    type: 'boolean',
+    title: '启用止损',
+    default: true,
+    'x-component': 'Switch'
+  }
+});
+
+export const customFeatures = defineFeatures([
+  {
+    id: 'atr14',
+    label: 'ATR(14)',
+    valueType: 'number',
+    unit: 'price',
+    supportedOperators: ['>', '<', 'between'],
+    schemaForm: {
+      operator: {
+        type: 'string',
+        title: '比较方式',
+        enum: ['>', '<', 'between'],
+        default: '>'
+      },
+      value: {
+        type: 'number',
+        title: '阈值',
+        'x-component': 'NumberPicker'
+      },
+      range: {
+        type: 'array',
+        title: '区间',
+        items: { type: 'number' },
+        'x-component': 'RangeInput',
+        'x-visible': '{{ $values.operator === "between" }}'
+      }
+    },
+    compute(stream) {
+      return stream;
+    }
+  },
+  {
+    id: 'signalTag',
+    label: '信号标签',
+    valueType: 'enum',
+    domain: ['breakout', 'reversion', 'momentum'],
+    supportedOperators: ['=', '!=', 'in'],
+    schemaForm: {
+      operator: {
+        type: 'string',
+        title: '比较方式',
+        enum: ['=', '!=', 'in'],
+        default: 'in'
+      },
+      values: {
+        type: 'array',
+        title: '标签',
+        items: {
+          type: 'string',
+          enum: [
+            { label: '突破', value: 'breakout' },
+            { label: '均值回归', value: 'reversion' },
+            { label: '动量', value: 'momentum' }
+          ]
+        },
+        'x-component': 'Select',
+        'x-component-props': { mode: 'multiple' }
+      }
+    },
+    compute(stream) {
+      return stream;
+    }
+  },
+  {
+    id: 'holdingPeriod',
+    label: '持仓时长（分钟）',
+    valueType: 'integer',
+    supportedOperators: ['>', '<', 'between'],
+    schemaForm: {
+      operator: {
+        type: 'string',
+        title: '比较方式',
+        enum: ['>', '<', 'between'],
+        default: '>'
+      },
+      value: {
+        type: 'integer',
+        title: '分钟数',
+        minimum: 0,
+        'x-component': 'NumberPicker'
+      },
+      range: {
+        type: 'array',
+        title: '区间',
+        items: { type: 'integer' },
+        'x-component': 'RangeInput',
+        'x-visible': '{{ $values.operator === "between" }}'
+      }
+    },
+    compute(stream, ctx) {
+      const sharedHolding = ctx.sharedState?.holdingMinutes$;
+      return sharedHolding
+        ? stream.pipe(
+            withLatestFrom(sharedHolding),
+            map(([event, minutes]) => ({
+              ...event,
+              features: { ...event.features, holdingPeriod: minutes }
+            }))
+          )
+        : stream;
+    }
+  }
+]);
+
+const strategy: StrategyLifecycle = {
+  onInit(ctx) {
+    const params = ctx.getParameters<typeof parameters>();
+    ctx.log('info', `Strategy init with threshold ${params.entryThreshold}`);
+  },
+  // ... 其余生命周期钩子
+};
+
+export default strategy;
+```
+
+- 后端保存脚本时，会解析/执行 `defineParameters` 与 `defineFeatures` 的返回值，将元数据提取并单独存入数据库，供前端表单与分析模块使用。
+
+### 5.8 自定义参数的提取与使用
+- `defineParameters` 返回一个 Formily 兼容的 schema 片段（以参数名为 key），字段中可包含 `type`、`title`、`default`、`x-component`、`x-component-props`、`x-validator` 等信息；保存脚本时原样序列化到数据库。
+- 前端加载策略时读取该 schema 渲染表单，用户填写后作为会话配置提交；编排层合并 `defaultParameters`（Manifest）与用户输入 → 通过 `StrategyContext.getParameters()` 提供给脚本，保持字段名一致。
+- schema 可扩展更多组件与校验（如联动、提示语等），策略端获取值时仍以 key 访问。
+
+### 5.9 自定义因子定义与前端展示
+- `defineFeatures` 中的每个特征需提供：
+  - `id`、`label`、`valueType`、`unit`、`supportedOperators`、`domain/range` 等描述；
+  - `schemaForm`：用于筛选表单的 Formily 片段（定义 operator、输入控件等）；
+  - `dependsOn`（可选）声明依赖字段；
+  - `compute`：RxJS 运算，将特征写回事件的 `features` 字段，可结合 `ctx.sharedState` 复用已有结果。
+- 保存脚本时，后端提取 `customFeatures` 元数据与 `schemaForm`；回测运行中由 FeatureRegistry 注册执行。
+- “交易结果分析”模块读取特征元数据和 `schemaForm` 渲染筛选 UI，根据 `supportedOperators` 生成比较逻辑（如 ATR > 10 / between 等）。
+- 若特征需要参数化（如窗口长度），可在 `compute` 中读取 `ctx.getParameters()` 或在 `schemaForm` 中引导用户输入，自行处理。
+
+### 5.10 脚本内部共享状态与复用因子结果
+- `StrategyContext` 将提供 `ctx.sharedState` 或 `ctx.registerSharedState(key, observable)` 等 API，允许策略在生命周期内注册可复用的数据流（例如在 `onBar` 中计算好的指标结果）。
+- `defineFeatures` 的 `compute` 第二个参数会收到上述共享状态引用，可通过 `withLatestFrom` 等方式直接复用已有结果，避免重复计算。
+- 若特征依赖执行或风控事件，可在策略生命周期中把结果推送到 `sharedState`（例如使用 `Subject`），`compute` 流中订阅该 `Subject` 并与行情流组合。
+- 快照/恢复时，策略需在 `onSnapshot` / `onRestore` 中同步共享状态，以确保暂停后恢复时计算持续正确。
+- `compute` 的触发时机为每个行情事件（`MarketBarEvent` 或辅助流）进入策略生命周期之前，FeatureRegistry 会先执行自定义特征的 `compute` 管道再将事件投递给策略钩子，确保 `event.features` 始终包含最新值。
 
 如需调整或扩展以上共识，请继续补充。框架方案的进一步细化将以此为基线。
 - **事件存档**：`RecordedEvent` 与 `EventStore` 会将所有事件按 `sequenceId` 顺序持久化。分析亏损交易时可据 `LedgerRecordPayload.sequenceId` 或 `timestamp` 回读前后事件（行情、策略指令、风控反馈、执行回报、日志、指标），重建完整上下文。
