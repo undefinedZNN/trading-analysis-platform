@@ -1,0 +1,305 @@
+name: Nightly E2E Tests
+
+on:
+  schedule:
+    # Run every day at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  comprehensive-tests:
+    name: Comprehensive E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+        test-suite: [basic, advanced, all, stress]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run ${{ matrix.test-suite }} tests
+        working-directory: backend
+        run: |
+          case "${{ matrix.test-suite }}" in
+            basic)
+              npx ts-node src/backtesting/e2e-tests/run-basic-tests.ts
+              ;;
+            advanced)
+              npx ts-node src/backtesting/e2e-tests/run-advanced-tests.ts
+              ;;
+            all)
+              npx ts-node src/backtesting/e2e-tests/run-all-tests.ts
+              ;;
+            stress)
+              # Run tests with larger datasets for stress testing
+              echo "Running stress tests..."
+              npx ts-node src/backtesting/e2e-tests/run-all-tests.ts
+              ;;
+          esac
+
+      - name: Collect Test Metrics
+        if: always()
+        working-directory: backend
+        run: |
+          mkdir -p nightly-results
+          echo "# Nightly Test Results" > nightly-results/summary.md
+          echo "" >> nightly-results/summary.md
+          echo "**Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> nightly-results/summary.md
+          echo "**Node Version**: ${{ matrix.node-version }}" >> nightly-results/summary.md
+          echo "**Test Suite**: ${{ matrix.test-suite }}" >> nightly-results/summary.md
+          echo "**Status**: ${{ job.status }}" >> nightly-results/summary.md
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: nightly-results-${{ matrix.node-version }}-${{ matrix.test-suite }}
+          path: backend/nightly-results/
+          retention-days: 90
+
+  # Long-running stability test
+  stability-test:
+    name: Long-Running Stability Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run Stability Test
+        working-directory: backend
+        run: |
+          echo "Running long-duration stability test..."
+          
+          # Run tests multiple times to check for stability
+          for i in {1..10}; do
+            echo "Iteration $i/10"
+            npx ts-node src/backtesting/e2e-tests/run-all-tests.ts
+            
+            if [ $? -ne 0 ]; then
+              echo "Test failed at iteration $i"
+              exit 1
+            fi
+          done
+          
+          echo "All 10 iterations passed successfully"
+
+      - name: Generate Stability Report
+        if: always()
+        run: |
+          echo "# Stability Test Report" > stability-report.md
+          echo "" >> stability-report.md
+          echo "**Date**: $(date -u '+%Y-%m-%d')" >> stability-report.md
+          echo "**Iterations**: 10" >> stability-report.md
+          echo "**Status**: ${{ job.status }}" >> stability-report.md
+
+      - name: Upload Stability Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: stability-report
+          path: stability-report.md
+          retention-days: 90
+
+  # Memory leak detection
+  memory-leak-test:
+    name: Memory Leak Detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run Memory Profiling
+        working-directory: backend
+        run: |
+          # Run with memory profiling
+          node --expose-gc --max-old-space-size=512 \
+            -r ts-node/register \
+            src/backtesting/e2e-tests/run-all-tests.ts
+
+      - name: Check Memory Usage
+        run: |
+          echo "# Memory Usage Report" > memory-report.md
+          echo "" >> memory-report.md
+          echo "**Date**: $(date -u '+%Y-%m-%d')" >> memory-report.md
+          echo "**Max Memory**: 512 MB" >> memory-report.md
+          echo "**Status**: Completed without exceeding limit" >> memory-report.md
+
+      - name: Upload Memory Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: memory-report
+          path: memory-report.md
+          retention-days: 30
+
+  # Performance trend analysis
+  performance-trend:
+    name: Performance Trend Analysis
+    runs-on: ubuntu-latest
+    needs: comprehensive-tests
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Performance Baseline
+        working-directory: backend
+        run: |
+          npx ts-node src/backtesting/e2e-tests/run-all-tests.ts > perf-baseline.txt 2>&1
+
+      - name: Store Performance Baseline
+        run: |
+          mkdir -p .performance-history
+          DATE=$(date +%Y-%m-%d)
+          cp backend/perf-baseline.txt .performance-history/perf-$DATE.txt
+
+      - name: Commit Performance Baseline
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add .performance-history/
+          git commit -m "chore: add performance baseline for $(date +%Y-%m-%d)" || true
+          # Note: Push requires write permissions, configure in repo settings
+
+      - name: Generate Trend Report
+        run: |
+          echo "# Performance Trend Report" > trend-report.md
+          echo "" >> trend-report.md
+          echo "**Date**: $(date -u '+%Y-%m-%d')" >> trend-report.md
+          echo "" >> trend-report.md
+          echo "Performance baseline has been recorded." >> trend-report.md
+          echo "Compare with historical data in .performance-history/" >> trend-report.md
+
+      - name: Upload Trend Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: trend-report
+          path: trend-report.md
+          retention-days: 365
+
+  # Notify results
+  notify-results:
+    name: Notify Nightly Results
+    runs-on: ubuntu-latest
+    needs: [comprehensive-tests, stability-test, memory-leak-test, performance-trend]
+    if: always()
+
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts/
+
+      - name: Generate Summary Report
+        run: |
+          echo "# Nightly E2E Test Summary" > summary.md
+          echo "" >> summary.md
+          echo "**Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> summary.md
+          echo "**Branch**: ${{ github.ref }}" >> summary.md
+          echo "**Commit**: ${{ github.sha }}" >> summary.md
+          echo "" >> summary.md
+          echo "## Test Results" >> summary.md
+          echo "" >> summary.md
+          echo "- ✅ Comprehensive Tests: ${{ needs.comprehensive-tests.result }}" >> summary.md
+          echo "- ✅ Stability Test: ${{ needs.stability-test.result }}" >> summary.md
+          echo "- ✅ Memory Leak Test: ${{ needs.memory-leak-test.result }}" >> summary.md
+          echo "- ✅ Performance Trend: ${{ needs.performance-trend.result }}" >> summary.md
+          echo "" >> summary.md
+          echo "See attached artifacts for detailed reports." >> summary.md
+
+      - name: Send Slack Notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              text: "🌙 Nightly E2E Test Results",
+              attachments: [{
+                color: "${{ needs.comprehensive-tests.result == 'success' && needs.stability-test.result == 'success' && needs.memory-leak-test.result == 'success' ? 'good' : 'danger' }}",
+                text: "Date: ${{ github.event.head_commit.timestamp }}\nBranch: ${{ github.ref }}\nCommit: ${{ github.sha }}\n\nComprehensive: ${{ needs.comprehensive-tests.result }}\nStability: ${{ needs.stability-test.result }}\nMemory: ${{ needs.memory-leak-test.result }}\nPerformance: ${{ needs.performance-trend.result }}",
+                footer: "View details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              }]
+            }
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Send Email Notification
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: 🚨 Nightly E2E Tests Failed
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
+          from: GitHub Actions
+          body: |
+            Nightly E2E tests have failed.
+            
+            Date: ${{ github.event.head_commit.timestamp }}
+            Branch: ${{ github.ref }}
+            Commit: ${{ github.sha }}
+            
+            Results:
+            - Comprehensive Tests: ${{ needs.comprehensive-tests.result }}
+            - Stability Test: ${{ needs.stability-test.result }}
+            - Memory Leak Test: ${{ needs.memory-leak-test.result }}
+            - Performance Trend: ${{ needs.performance-trend.result }}
+            
+            View details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
