@@ -413,7 +413,7 @@ describe('EquityCurveGenerator', () => {
     });
 
     it('should handle trades on same timestamp', () => {
-      const sameTi me Trades = mockTrades.map(t => ({
+      const sameTimeTrades = mockTrades.map(t => ({
         ...t,
         timestamp: '2024-01-01T00:00:00Z',
       }));

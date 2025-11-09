@@ -114,7 +114,7 @@ describe('ResultCollector', () => {
 
     // Mock Ledger service
     mockLedger = {
-      getAllTrades: jest.fn().mockResolvedValue(mockTrades),
+      getTrades: jest.fn().mockResolvedValue(mockTrades),
       getStats: jest.fn().mockResolvedValue(mockTradeStats),
     } as any;
 
@@ -203,7 +203,7 @@ describe('ResultCollector', () => {
       expect(results.sessionId).toBe('test-session');
       expect(results.config).toEqual(configSummary);
       expect(results.status).toBe('completed');
-      expect(mockLedger.getAllTrades).toHaveBeenCalled();
+      expect(mockLedger.getTrades).toHaveBeenCalled();
       expect(mockLedger.getStats).toHaveBeenCalled();
     });
 
@@ -320,7 +320,7 @@ describe('ResultCollector', () => {
 
     it('should handle partial failures gracefully', async () => {
       // Mock ledger to throw error
-      mockLedger.getAllTrades.mockRejectedValue(new Error('Database error'));
+      mockLedger.getTrades.mockRejectedValue(new Error('Database error'));
 
       const configSummary = {
         sessionId: 'test-session',
@@ -418,7 +418,7 @@ describe('ResultCollector', () => {
 
   describe('edge cases', () => {
     it('should handle empty trade list', async () => {
-      mockLedger.getAllTrades.mockResolvedValue([]);
+      mockLedger.getTrades.mockResolvedValue([]);
       mockLedger.getStats.mockResolvedValue({
         totalTrades: 0,
         totalPnl: '0',

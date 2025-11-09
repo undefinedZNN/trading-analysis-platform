@@ -17,7 +17,7 @@ import type {
 } from './interfaces';
 import { ResultExportError } from './interfaces';
 import type { TradeRecord, TradeStats, LedgerService } from '../ledger/interfaces';
-import type { PerformanceCalculator } from './performance-calculator';
+import type { PerformanceCalculatorImpl as PerformanceCalculator } from './performance-calculator';
 import type { EquityCurveGenerator } from './equity-curve-generator';
 
 /**
@@ -151,7 +151,7 @@ export class ResultCollectorImpl implements ResultCollector {
 
       if (dataSources.ledger) {
         try {
-          trades = await dataSources.ledger.getAllTrades();
+          trades = await dataSources.ledger.getTrades();
           tradeStats = await dataSources.ledger.getStats();
         } catch (error) {
           errors.push(`Failed to collect ledger data: ${error}`);

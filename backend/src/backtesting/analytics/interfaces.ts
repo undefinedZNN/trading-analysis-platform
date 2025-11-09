@@ -9,6 +9,9 @@
 import Big from 'big.js';
 import type { TradeStats } from '../ledger/interfaces';
 
+// Re-export TradeStats for convenience
+export type { TradeStats };
+
 // ============================================================================
 // 性能指标类型
 // ============================================================================
@@ -341,6 +344,8 @@ export class SessionResultsNotFoundError extends AnalyticsError {
  * 指标计算错误
  */
 export class MetricsCalculationError extends AnalyticsError {
+  public cause?: Error;
+  
   constructor(message: string, cause?: Error) {
     super(`Metrics calculation error: ${message}`);
     this.name = 'MetricsCalculationError';
@@ -354,6 +359,8 @@ export class MetricsCalculationError extends AnalyticsError {
  * 结果导出错误
  */
 export class ResultExportError extends AnalyticsError {
+  public cause?: Error;
+  
   constructor(message: string, cause?: Error) {
     super(`Result export error: ${message}`);
     this.name = 'ResultExportError';

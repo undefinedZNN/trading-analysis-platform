@@ -8,7 +8,19 @@
 
 import Big from 'big.js';
 import { nanoid } from 'nanoid';
-import type { BarEvent } from '../../events/interfaces';
+// Define BarEvent type for test data
+export interface BarEvent {
+  type: 'BAR';
+  timestamp: string;
+  symbol: string;
+  data: {
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    volume: string;
+  };
+}
 
 /**
  * 数据生成配置
