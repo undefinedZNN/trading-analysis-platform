@@ -193,6 +193,9 @@ export interface SubscriptionOptions {
   
   /** 是否持久化订阅 */
   durable?: boolean;
+  
+  /** Legacy predicate for filtering events */
+  predicate?: (event: BaseEvent) => boolean;
 }
 
 /**
@@ -285,6 +288,22 @@ export interface BusMetrics {
   
   /** 平均处理延迟（毫秒） */
   avgProcessingLatency: number;
+  
+  // Legacy/alias properties for backward compatibility with tests
+  /** 总事件数 (alias for totalProcessed) */
+  totalEvents: number;
+  
+  /** 错误计数 */
+  errorCount: number;
+  
+  /** 缓冲区使用率 (0-1) */
+  bufferUsage: number;
+  
+  /** 吞吐量 (alias for eventsPerSecond) */
+  throughput: number;
+  
+  /** 运行时间 (毫秒) */
+  uptime: number;
 }
 
 /**

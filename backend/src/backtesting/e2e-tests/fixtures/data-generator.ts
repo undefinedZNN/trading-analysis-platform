@@ -10,7 +10,7 @@ import Big from 'big.js';
 import { nanoid } from 'nanoid';
 // Define BarEvent type for test data
 export interface BarEvent {
-  type: 'BAR';
+  type: 'bar';  // lowercase to match actual usage
   timestamp: string;
   symbol: string;
   data: {
@@ -70,14 +70,14 @@ export class DataGenerator {
       bars.push({
         type: 'bar',
         symbol: 'BTCUSDT',
-        timeframe: '1m',
         timestamp: new Date(currentTime).toISOString(),
-        open: new Big(open).toFixed(2),
-        high: new Big(high).toFixed(2),
-        low: new Big(low).toFixed(2),
-        close: new Big(close).toFixed(2),
-        volume: new Big(volume).toFixed(4),
-        sequenceId: nanoid(),
+        data: {
+          open: new Big(open).toFixed(2),
+          high: new Big(high).toFixed(2),
+          low: new Big(low).toFixed(2),
+          close: new Big(close).toFixed(2),
+          volume: new Big(volume).toFixed(4),
+        },
       });
 
       currentPrice = close;

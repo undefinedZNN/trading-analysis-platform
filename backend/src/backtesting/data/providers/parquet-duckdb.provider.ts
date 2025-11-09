@@ -70,13 +70,12 @@ export class ParquetDuckDBProvider implements DataProvider {
           return;
         }
 
-        this.connection = this.db!.connect((connErr) => {
-          if (connErr) {
-            reject(new Error(`Failed to connect to DuckDB: ${connErr.message}`));
-            return;
-          }
-          resolve();
-        });
+        this.connection = this.db!.connect();
+        if (!this.connection) {
+          reject(new Error('Failed to create DuckDB connection'));
+          return;
+        }
+        resolve();
       });
     });
   }

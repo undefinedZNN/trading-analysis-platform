@@ -419,7 +419,7 @@ describe('ResultCollector', () => {
   describe('edge cases', () => {
     it('should handle empty trade list', async () => {
       mockLedger.getTrades.mockResolvedValue([]);
-      mockLedger.getStats.mockResolvedValue({
+      (mockLedger.getStats as jest.Mock).mockResolvedValue({
         totalTrades: 0,
         totalPnl: '0',
         totalFees: '0',

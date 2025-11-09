@@ -237,13 +237,13 @@ async function example6_SpecificFields() {
       fields: ['close', 'volume'], // 只提取收盘价和成交量
     });
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       barEvents$.subscribe({
-        next: (bar) => {
+        next: (bar: any) => {
           console.log(`${bar.timestamp}: Close=${bar.close}, Volume=${bar.volume}`);
         },
         error: reject,
-        complete: resolve,
+        complete: () => resolve(),
       });
     });
   } finally {
@@ -262,7 +262,7 @@ async function example7_Metadata() {
   });
 
   try {
-    const metadata = await provider.getMetadata('BTC-USDT', '1m');
+    const metadata = await provider.getMetadata('BTC-USDT');
     
     console.log('数据集元数据:');
     console.log(`  标的: ${metadata.symbol}`);

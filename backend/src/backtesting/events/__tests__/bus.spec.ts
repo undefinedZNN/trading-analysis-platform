@@ -81,12 +81,15 @@ describe('EventBus', () => {
 
       const testEvent: BaseEvent = {
         type: 'market.bar',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
+        eventId: 'evt-1',
+        sessionId: 'test',
+        sequenceId: 1,
         payload: { symbol: 'BTC/USDT', close: '50000' },
-      };
+      } as any;
 
       bus.event$.pipe(take(1)).subscribe({
-        next: (event) => {
+        next: (event: any) => {
           expect(event.type).toBe('market.bar');
           expect(event.payload).toEqual(testEvent.payload);
           done();
@@ -103,9 +106,12 @@ describe('EventBus', () => {
 
       const testEvent: BaseEvent = {
         type: 'market.bar',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
+        eventId: 'evt-2',
+        sessionId: 'test',
+        sequenceId: 2,
         payload: {},
-      };
+      } as any;
 
       expect(() => bus.publish(testEvent)).toThrow(/stopped/);
     });
@@ -125,9 +131,12 @@ describe('EventBus', () => {
       for (let i = 0; i < 3; i++) {
         bus.publish({
           type: 'market.bar',
-          timestamp: Date.now() + i,
+          timestamp: new Date(Date.now() + i).toISOString(),
+          eventId: `evt-${i}`,
+          sessionId: 'test',
+          sequenceId: i + 1,
           payload: { index: i },
-        });
+        } as any);
       }
     });
   });
@@ -146,15 +155,21 @@ describe('EventBus', () => {
 
       bus.publish({
         type: 'market.bar',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
+        eventId: `evt-${Math.random()}`,
+        sessionId: 'test',
+        sequenceId: Math.floor(Math.random() * 1000),
         payload: {},
-      });
+      } as any);
 
       bus.publish({
         type: 'strategy.intent',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
+        eventId: `evt-${Math.random()}`,
+        sessionId: 'test',
+        sequenceId: Math.floor(Math.random() * 1000),
         payload: {},
-      });
+      } as any);
     });
 
     it('should subscribe to multiple event types', (done) => {
@@ -180,21 +195,30 @@ describe('EventBus', () => {
 
       bus.publish({
         type: 'market.bar',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
+        eventId: `evt-${Math.random()}`,
+        sessionId: 'test',
+        sequenceId: Math.floor(Math.random() * 1000),
         payload: {},
-      });
+      } as any);
 
       bus.publish({
         type: 'strategy.intent',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
+        eventId: `evt-${Math.random()}`,
+        sessionId: 'test',
+        sequenceId: Math.floor(Math.random() * 1000),
         payload: {},
-      });
+      } as any);
 
       bus.publish({
         type: 'execution.order',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
+        eventId: `evt-${Math.random()}`,
+        sessionId: 'test',
+        sequenceId: Math.floor(Math.random() * 1000),
         payload: {},
-      });
+      } as any);
     });
 
     it('should filter events with predicate', (done) => {
@@ -216,15 +240,21 @@ describe('EventBus', () => {
 
       bus.publish({
         type: 'market.bar',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
+        eventId: 'evt-eth',
+        sessionId: 'test',
+        sequenceId: 100,
         payload: { symbol: 'ETH/USDT' },
-      });
+      } as any);
 
       bus.publish({
         type: 'market.bar',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
+        eventId: 'evt-btc',
+        sessionId: 'test',
+        sequenceId: 101,
         payload: { symbol: 'BTC/USDT' },
-      });
+      } as any);
     });
   });
 
@@ -232,7 +262,6 @@ describe('EventBus', () => {
     it('should emit control events', (done) => {
       const controlEvent: ControlEvent = {
         type: 'START',
-        timestamp: Date.now(),
       };
 
       bus.control$.pipe(take(1)).subscribe({
@@ -277,9 +306,12 @@ describe('EventBus', () => {
       for (let i = 0; i < 5; i++) {
         bus.publish({
           type: 'market.bar',
-          timestamp: Date.now() + i,
+          timestamp: new Date(Date.now() + i).toISOString(),
+          eventId: `evt-${i}`,
+          sessionId: 'test',
+          sequenceId: i + 1,
           payload: { index: i },
-        });
+        } as any);
       }
 
       expect(() => bus.checkpoint('cp1')).not.toThrow();
@@ -305,9 +337,12 @@ describe('EventBus', () => {
       for (let i = 0; i < 5; i++) {
         bus.publish({
           type: 'market.bar',
-          timestamp: Date.now() + i,
+          timestamp: new Date(Date.now() + i).toISOString(),
+          eventId: `evt-${i}`,
+          sessionId: 'test',
+          sequenceId: i + 1,
           payload: { index: i },
-        });
+        } as any);
       }
     });
 
@@ -331,9 +366,12 @@ describe('EventBus', () => {
       for (let i = 0; i < 8; i++) {
         smallBus.publish({
           type: 'market.bar',
-          timestamp: Date.now() + i,
+          timestamp: new Date(Date.now() + i).toISOString(),
+          eventId: `evt-${i}`,
+          sessionId: 'test',
+          sequenceId: i + 1,
           payload: { index: i },
-        });
+        } as any);
       }
     });
   });

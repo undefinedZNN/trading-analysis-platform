@@ -462,11 +462,19 @@ export class EventBus implements IEventBus {
     const throughput = uptime > 0 ? (this.eventCount / uptime) * 1000 : 0;
 
     return {
+      timestamp: new Date().toISOString(),
+      sessionId: this.config.sessionId || 'default',
+      eventsPerSecond: throughput,
+      inflight: 0, // Not tracked in this implementation
+      totalProcessed: this.eventCount,
+      deadLetterCount: this.deadLetterCount,
+      subscriptionCount: 0, // Not tracked in this implementation
+      eventsByType: {}, // Not tracked in this implementation
+      avgProcessingLatency: 0, // Not tracked in this implementation
+      // Legacy/alias properties
       totalEvents: this.eventCount,
       errorCount: this.errorCount,
-      deadLetterCount: this.deadLetterCount,
       bufferUsage: this.eventCount / this.config.bufferSize,
-      backpressure: this.stateSubject.value.backpressure,
       throughput,
       uptime,
     };
