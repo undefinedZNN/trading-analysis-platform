@@ -13,6 +13,7 @@ import type {
   CustomFeatureDefinition,
 } from './interfaces';
 import { validateParameters } from './utils';
+import { StrategyCompilerService } from './compiler.service';
 
 /**
  * 简化的策略加载器实现
@@ -21,6 +22,12 @@ import { validateParameters } from './utils';
  * 生产环境需要使用更安全的沙箱加载机制
  */
 export class SimpleStrategyLoader implements StrategyLoader {
+  private compiler: StrategyCompilerService;
+
+  constructor() {
+    this.compiler = new StrategyCompilerService();
+  }
+
   /**
    * 从策略对象加载（用于测试）
    * @param strategyModule 策略模块对象
@@ -57,7 +64,7 @@ export class SimpleStrategyLoader implements StrategyLoader {
   }
 
   /**
-   * 从脚本内容加载（占位实现）
+   * 从脚本内容加载
    * @param scriptContent 脚本内容
    * @param manifest Manifest
    */
@@ -65,16 +72,48 @@ export class SimpleStrategyLoader implements StrategyLoader {
     scriptContent: string,
     manifest: StrategyManifest
   ): Promise<StrategyInstance> {
-    // 在实际实现中，这里需要：
-    // 1. 使用 TypeScript compiler API 编译脚本
-    // 2. 在沙箱环境中执行
-    // 3. 提取导出并验证
-    
-    // 当前简化实现：直接抛出错误
-    throw new Error(
-      'Dynamic script loading not implemented. ' +
-      'Use loadFromObject for testing.'
-    );
+    // 1. 编译脚本
+    const compileResult = await this.compiler.compile(scriptContent, {
+      timeout: 10000, // 10秒超时
+      removeComments: false,
+    });
+
+    if (!compileResult.success) {
+      throw new Error(
+        'Strategy compilation failed:\n' +
+        (compileResult.errors || []).join('\n')
+      );
+    }
+
+    // 2. 验证导出
+    const validation = this.compiler.validateExports(compileResult.exports);
+    if (!validation.valid) {
+      throw new Error(
+        'Invalid strategy exports:\n' +
+        validation.errors.join('\n')
+      );
+    }
+
+    // 3. 提取导出
+    const lifecycle = compileResult.exports.default;
+    const parameters = compileResult.exports.parameters || {};
+    const customFeatures = compileResult.exports.customFeatures;
+
+    // 4. 校验生命周期接口
+    this.validateLifecycle(lifecycle);
+
+    // 5. 校验参数定义
+    if (Object.keys(parameters).length > 0) {
+      this.validateParameterDefinition(parameters, manifest);
+    }
+
+    // 6. 创建策略实例
+    return {
+      lifecycle,
+      manifest,
+      parameters,
+      customFeatures,
+    };
   }
 
   /**

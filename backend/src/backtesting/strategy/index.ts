@@ -38,3 +38,11 @@ export {
   mergeParameters,
 } from './utils';
 
+// 编译服务
+export {
+  StrategyCompilerService,
+  createCompilerService,
+  type CompileOptions,
+  type CompileResult,
+} from './compiler.service';
+

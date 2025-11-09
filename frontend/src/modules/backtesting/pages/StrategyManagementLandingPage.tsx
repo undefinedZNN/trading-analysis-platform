@@ -43,21 +43,13 @@ import type {
   StrategyVersionSummary,
 } from '../../../shared/api/backtesting';
 import type { VersionCodeDiffSegment, VersionDiffResponse } from '../../../shared/api/backtesting';
+import { getDefaultStrategyTemplate } from '../templates/defaultStrategyTemplate';
 
 const { Title, Paragraph, Text } = Typography;
 
 const DATE_FORMAT = 'YYYY-MM-DD HH:mm';
 type StrategyVersionDiff = VersionDiffResponse;
-const DEFAULT_SCRIPT_TEMPLATE = `import { defineStrategy } from '@platform/backtesting-sdk';
-
-export default defineStrategy({
-  parameters: [],
-  factors: [],
-  run(ctx) {
-    // TODO: implement strategy logic
-  },
-});
-`;
+const DEFAULT_SCRIPT_TEMPLATE = getDefaultStrategyTemplate('full');
 
 const normalizeSchemaFields = (value: unknown): SchemaField[] =>
   Array.isArray(value) ? (value as SchemaField[]) : [];
