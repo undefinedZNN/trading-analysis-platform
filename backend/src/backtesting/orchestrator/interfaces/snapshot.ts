@@ -41,6 +41,9 @@ export interface SnapshotMeta {
   /** 是否压缩 */
   compressed: boolean;
   
+  /** 标签 */
+  tags?: string[];
+  
   /** 其他元数据 */
   metadata?: Record<string, unknown>;
 }
@@ -222,6 +225,27 @@ export interface SnapshotStorage {
    * @returns 是否存在
    */
   exists(sessionId: string, checkpointId: string): Promise<boolean>;
+  
+  /**
+   * 清理会话的所有快照
+   * 
+   * @param sessionId 会话ID
+   * @returns 清理的快照数量
+   */
+  cleanup?(sessionId: string): Promise<number>;
+  
+  /**
+   * 获取存储统计信息
+   * 
+   * @param sessionId 会话ID (可选)
+   * @returns 统计信息
+   */
+  getStats?(sessionId?: string): Promise<{
+    totalSnapshots: number;
+    totalSize: number;
+    oldestSnapshot?: string;
+    newestSnapshot?: string;
+  }>;
 }
 
 // ============================================================================
@@ -254,7 +278,7 @@ export interface SnapshotSerializer {
    * @param data 原始数据
    * @returns 压缩后的数据
    */
-  compress?(data: string): Buffer;
+  compress?(data: string): Promise<Buffer> | Buffer;
   
   /**
    * 解压缩数据
@@ -262,7 +286,7 @@ export interface SnapshotSerializer {
    * @param data 压缩的数据
    * @returns 原始数据
    */
-  decompress?(data: Buffer): string;
+  decompress?(data: Buffer): Promise<string> | string;
 }
 
 // ============================================================================
@@ -385,6 +409,8 @@ export class SnapshotAlreadyExistsError extends SnapshotError {
  * 快照序列化异常
  */
 export class SnapshotSerializationError extends SnapshotError {
+  cause?: Error;
+  
   constructor(message: string, cause?: Error) {
     super(`Serialization error: ${message}`);
     this.name = 'SnapshotSerializationError';
@@ -398,6 +424,8 @@ export class SnapshotSerializationError extends SnapshotError {
  * 快照恢复异常
  */
 export class SnapshotRestoreError extends SnapshotError {
+  cause?: Error;
+  
   constructor(message: string, cause?: Error) {
     super(`Restore error: ${message}`);
     this.name = 'SnapshotRestoreError';
@@ -411,6 +439,8 @@ export class SnapshotRestoreError extends SnapshotError {
  * 快照存储错误
  */
 export class SnapshotStorageError extends SnapshotError {
+  cause?: Error;
+  
   constructor(message: string, cause?: Error) {
     super(`Storage error: ${message}`);
     this.name = 'SnapshotStorageError';

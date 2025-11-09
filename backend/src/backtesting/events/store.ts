@@ -57,7 +57,7 @@ export interface EventStoreConfig {
  * - 内存：环形缓冲区，快速访问
  * - 文件：Parquet 格式，持久化存储
  */
-export class EventStore implements IEventStore {
+export class EventStore {
   private readonly config: Required<EventStoreConfig>;
 
   // === 内存缓冲区 ===
@@ -145,11 +145,12 @@ export class EventStore implements IEventStore {
   /**
    * 追加事件
    */
-  append(event: BaseEvent): void {
+  append(event: BaseEvent | RecordedEvent): void {
     const recordedEvent: RecordedEvent = {
-      ...event,
+      ...(event as any),
       eventId: this.eventIdCounter++,
-      recordedAt: Date.now(),
+      timestamp: typeof event.timestamp === 'string' ? event.timestamp : Date.now(),
+      status: 'pending' as const,
     };
 
     // 添加到内存缓冲区（环形）
@@ -162,10 +163,11 @@ export class EventStore implements IEventStore {
     }
 
     // 更新时间元数据
+    const eventTime = typeof event.timestamp === 'string' ? new Date(event.timestamp).getTime() : Number(event.timestamp);
     if (this.firstEventTime === null) {
-      this.firstEventTime = event.timestamp;
+      this.firstEventTime = eventTime;
     }
-    this.lastEventTime = event.timestamp;
+    this.lastEventTime = eventTime;
 
     // 添加到待刷盘队列
     if (this.config.enablePersistence) {
@@ -241,12 +243,20 @@ export class EventStore implements IEventStore {
    * 创建检查点
    */
   checkpoint(id: string): CheckpointMeta {
+    const now = Date.now();
     const snapshot: CheckpointSnapshot = {
       checkpointId: id,
-      timestamp: Date.now(),
+      timestamp: now,
       eventId: this.eventIdCounter - 1, // 最后一个事件的 ID
-      eventCount: this.memoryBuffer.length,
-      state: {}, // TODO: 添加状态快照
+      meta: {
+        checkpointId: id,
+        sequenceId: String(this.eventIdCounter - 1),
+        timestamp: now,
+        createdAt: new Date().toISOString(),
+        reason: 'manual',
+      },
+      busState: {} as any, // TODO: 添加状态快照
+      moduleStates: {},
     };
 
     this.checkpoints.set(id, snapshot);
@@ -258,8 +268,11 @@ export class EventStore implements IEventStore {
 
     return {
       checkpointId: id,
-      timestamp: snapshot.timestamp,
+      sequenceId: String(this.eventIdCounter - 1),
+      timestamp: now,
       eventId: snapshot.eventId,
+      createdAt: new Date().toISOString(),
+      reason: 'manual',
     };
   }
 
@@ -331,9 +344,12 @@ export class EventStore implements IEventStore {
    */
   listCheckpoints(): CheckpointMeta[] {
     return Array.from(this.checkpoints.values()).map((snapshot) => ({
-      checkpointId: snapshot.checkpointId,
-      timestamp: snapshot.timestamp,
+      checkpointId: snapshot.checkpointId || '',
+      sequenceId: snapshot.meta?.sequenceId || '0',
+      timestamp: snapshot.timestamp || Date.now(),
       eventId: snapshot.eventId,
+      createdAt: snapshot.meta?.createdAt || new Date().toISOString(),
+      reason: snapshot.meta?.reason || 'manual',
     }));
   }
 

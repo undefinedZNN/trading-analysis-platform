@@ -10,7 +10,6 @@ import { nanoid } from 'nanoid';
 import type {
   SessionSnapshot,
   SnapshotMeta,
-  ModuleSnapshot,
 } from '../interfaces/snapshot';
 import {
   SnapshotError,
@@ -18,6 +17,12 @@ import {
   SnapshotAlreadyExistsError,
 } from '../interfaces/snapshot';
 import type { SnapshotStorage } from '../interfaces/snapshot';
+
+// 模块快照类型定义
+interface ModuleSnapshot {
+  state: any;
+  timestamp: number;
+}
 import { VersionManager, type VersionManagerConfig } from './version-manager';
 
 /**
@@ -132,7 +137,7 @@ export class SnapshotManager {
       // 如果启用增量快照，计算差异
       let finalModules = modules;
       if (this.config.incrementalSnapshot && this.lastSnapshot) {
-        finalModules = this.calculateIncremental(modules, this.lastSnapshot.modules);
+        finalModules = this.calculateIncremental(modules, this.lastSnapshot.modules as any);
       }
 
       // 创建快照
@@ -220,7 +225,7 @@ export class SnapshotManager {
       const snapshot = await this.loadSnapshot(sessionId, checkpointId);
 
       // 恢复所有模块状态
-      await this.restoreAllModuleStates(snapshot.modules);
+      await this.restoreAllModuleStates(snapshot.modules as any);
 
       // 记录最后一个快照
       this.lastSnapshot = snapshot;
@@ -240,10 +245,11 @@ export class SnapshotManager {
    */
   async listSnapshots(sessionId: string): Promise<SnapshotMeta[]> {
     try {
-      return await this.storage.list(sessionId, {
-        sortBy: 'createdAt',
-        sortOrder: 'desc',
-      });
+      const snapshots = await this.storage.list(sessionId);
+      // 按创建时间降序排序
+      return snapshots.sort((a, b) => 
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
     } catch (error) {
       throw new SnapshotError(`Failed to list snapshots: ${error}`);
     }
@@ -312,7 +318,9 @@ export class SnapshotManager {
    */
   async cleanup(sessionId: string): Promise<void> {
     try {
-      await this.storage.cleanup(sessionId);
+      if (this.storage.cleanup) {
+        await this.storage.cleanup(sessionId);
+      }
     } catch (error) {
       throw new SnapshotError(`Failed to cleanup snapshots: ${error}`);
     }
@@ -331,7 +339,19 @@ export class SnapshotManager {
     newestSnapshot?: SnapshotMeta;
   }> {
     try {
-      return await this.storage.getStats(sessionId);
+      if (this.storage.getStats) {
+        const stats = await this.storage.getStats(sessionId);
+        return {
+          count: stats.totalSnapshots,
+          totalSize: stats.totalSize,
+        };
+      }
+      // 如果不支持getStats,返回默认值
+      const snapshots = await this.storage.list(sessionId);
+      return {
+        count: snapshots.length,
+        totalSize: 0,
+      };
     } catch (error) {
       throw new SnapshotError(`Failed to get stats: ${error}`);
     }

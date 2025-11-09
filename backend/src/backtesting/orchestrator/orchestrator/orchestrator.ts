@@ -9,7 +9,6 @@
 import { nanoid } from 'nanoid';
 import type {
   Orchestrator,
-  SessionSnapshot,
   SessionResults,
   CheckpointMeta,
   ModuleCoordinator,
@@ -17,9 +16,10 @@ import type {
 import {
   SessionNotFoundError,
   SessionAlreadyExistsError,
-  SnapshotNotFoundError,
   OrchestratorError,
 } from '../interfaces/orchestrator';
+import type { SessionSnapshot } from '../interfaces/snapshot';
+import { SnapshotNotFoundError } from '../interfaces/snapshot';
 import type { Session, SessionState } from '../interfaces/session';
 import { SessionEventType } from '../interfaces/session';
 import type { BacktestSessionConfig } from '../interfaces/config';
@@ -169,9 +169,17 @@ export class OrchestratorImpl implements Orchestrator {
     
     // 创建快照
     const snapshot: SessionSnapshot = {
-      meta,
-      config: (session as any).config,
-      moduleStates,
+      meta: {
+        ...meta,
+        status: 'active',
+        version: '1.0.0',
+        compressed: false,
+      },
+      modules: moduleStates as any,
+      eventStoreCheckpoint: { 
+        lastSequenceId: meta.sequenceId || '0',
+        processedCount: 0,
+      },
     };
     
     // 保存快照
@@ -211,13 +219,13 @@ export class OrchestratorImpl implements Orchestrator {
     const snapshot = this.snapshots.get(snapshotKey);
     
     if (!snapshot) {
-      throw new SnapshotNotFoundError(checkpointId);
+      throw new SnapshotNotFoundError(sessionId, checkpointId);
     }
     
     // 恢复模块状态
     await this.moduleCoordinator.restoreModuleStates(
       container,
-      snapshot.moduleStates
+      snapshot.modules as any
     );
   }
   
@@ -227,7 +235,7 @@ export class OrchestratorImpl implements Orchestrator {
   async getResults(sessionId: string): Promise<SessionResults> {
     const session = this.getSessionOrThrow(sessionId);
     const stats = session.getStats();
-    const state = session.getState();
+    const state = session.state;
     const container = (session as any).container as ServiceContainer;
     
     // 获取 LedgerService 的交易记录
@@ -240,9 +248,9 @@ export class OrchestratorImpl implements Orchestrator {
     
     // 确定状态
     let status: 'completed' | 'failed' | 'stopped';
-    if (state === 'Stopped') {
+    if (state === 'stopped') {
       status = 'stopped';
-    } else if (state === 'Destroyed') {
+    } else if (state === 'destroyed') {
       status = 'completed';
     } else {
       status = 'completed';
@@ -252,9 +260,9 @@ export class OrchestratorImpl implements Orchestrator {
     const results: SessionResults = {
       sessionId,
       status,
-      startTime: stats.startTime || Date.now(),
-      endTime: stats.endTime || Date.now(),
-      duration: stats.duration || 0,
+      startTime: (stats.startTime as number) || Date.now(),
+      endTime: (stats.endTime as number) || Date.now(),
+      duration: (stats.duration as number) || 0,
       stats: {
         processedEvents: stats.processedEvents || 0,
         errorCount: stats.errorCount || 0,

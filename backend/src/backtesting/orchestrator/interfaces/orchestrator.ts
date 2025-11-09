@@ -41,9 +41,10 @@ export interface CheckpointMeta {
 }
 
 /**
- * 会话快照
+ * 会话快照 (编排器视角)
+ * @deprecated 使用 SessionSnapshot from './snapshot' 代替
  */
-export interface SessionSnapshot {
+export interface OrchestratorSessionSnapshot {
   /** 检查点元数据 */
   meta: CheckpointMeta;
   
@@ -307,10 +308,13 @@ export class SessionAlreadyExistsError extends OrchestratorError {
 /**
  * 快照不存在异常
  */
-export class SnapshotNotFoundError extends OrchestratorError {
+/**
+ * @deprecated 使用 SnapshotNotFoundError from './snapshot' 代替
+ */
+export class OrchestratorSnapshotNotFoundError extends OrchestratorError {
   constructor(checkpointId: string) {
     super(`Snapshot not found: ${checkpointId}`);
-    this.name = 'SnapshotNotFoundError';
+    this.name = 'OrchestratorSnapshotNotFoundError';
   }
 }
 

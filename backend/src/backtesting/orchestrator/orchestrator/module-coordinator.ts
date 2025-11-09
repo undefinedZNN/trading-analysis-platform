@@ -41,7 +41,7 @@ export class ModuleCoordinatorImpl implements ModuleCoordinator {
     // 2. 初始化 TimeframeAdapter
     const timeframeAdapter = container.tryResolve(ServiceTokens.TimeframeAdapter);
     if (timeframeAdapter && typeof timeframeAdapter === 'object' && 'initialize' in timeframeAdapter) {
-      await (timeframeAdapter as any).initialize?.(config.timeframe);
+      await (timeframeAdapter as any).initialize?.((config as any).timeframe);
     }
     
     // 3. 初始化 FeatureRegistry

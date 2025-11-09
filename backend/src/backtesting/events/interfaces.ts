@@ -62,6 +62,9 @@ export interface BaseEvent<TPayload = unknown> {
   /** 事件类型 */
   eventType: EventType;
   
+  /** 事件类型别名 (用于兼容) */
+  type?: string;
+  
   /** 会话ID */
   sessionId: string;
   
@@ -119,6 +122,15 @@ export interface BusState {
   /** 时钟模式 */
   clockMode: 'event' | 'wall';
   
+  /** 事件计数 */
+  eventCount?: number;
+  
+  /** 缓冲区使用率 */
+  bufferUsage?: number;
+  
+  /** 是否处于背压状态 */
+  backpressure?: boolean;
+  
   /** 正在处理的事件数 */
   inflight: number;
   
@@ -147,7 +159,9 @@ export type ControlEventType =
   | 'RESUME'        // 恢复
   | 'STOP'          // 停止
   | 'SNAPSHOT'      // 快照
-  | 'SEEK';         // 跳转
+  | 'SEEK'          // 跳转
+  | 'RESET'         // 重置
+  | 'CHECKPOINT';   // 检查点
 
 /**
  * 控制事件
@@ -157,7 +171,10 @@ export interface ControlEvent {
   type: ControlEventType;
   
   /** 会话ID */
-  sessionId: string;
+  sessionId?: string;
+  
+  /** 时间戳 */
+  timestamp?: number;
   
   /** 载荷 */
   payload?: {
@@ -184,6 +201,9 @@ export interface SubscriptionOptions {
   
   /** 并发处理数 */
   concurrency?: number;
+  
+  /** 批处理大小 */
+  batchSize?: number;
   
   /** 重试策略 */
   retryPolicy?: RetryPolicy;
@@ -226,10 +246,13 @@ export interface DeadLetterEvent {
   originalEvent: BaseEvent;
   
   /** 错误信息 */
-  error: SerializedError;
+  error: SerializedError | string;
   
   /** 失败时间 */
-  failedAt: string;
+  failedAt?: string;
+  
+  /** 时间戳 */
+  timestamp?: number;
   
   /** 重试次数 */
   retryCount: number;
@@ -320,9 +343,8 @@ export interface EventBus {
    */
   subscribe<T = unknown>(
     eventType: EventType | EventType[],
-    handler: (event: BaseEvent<T>) => void | Promise<void>,
     options?: SubscriptionOptions
-  ): Subscription;
+  ): Observable<BaseEvent<T>>;
   
   /**
    * 状态流（Observable）
@@ -364,11 +386,14 @@ export interface EventBus {
  * 记录的事件（持久化格式）
  */
 export interface RecordedEvent {
+  /** 事件ID */
+  eventId?: number;
+  
   /** 序列ID */
   sequenceId: string;
   
   /** 时间戳 */
-  timestamp: string;
+  timestamp: string | number;
   
   /** 流ID（用于分区） */
   streamId: string;
@@ -393,11 +418,14 @@ export interface CheckpointMeta {
   /** 检查点ID */
   checkpointId: string;
   
+  /** 事件ID */
+  eventId?: number;
+  
   /** 序列ID */
   sequenceId: string;
   
   /** 逻辑时间 */
-  timestamp: string;
+  timestamp: string | number;
   
   /** 创建时间 */
   createdAt: string;
@@ -416,6 +444,15 @@ export interface CheckpointMeta {
  * 检查点快照
  */
 export interface CheckpointSnapshot {
+  /** 检查点ID */
+  checkpointId?: string;
+  
+  /** 事件ID */
+  eventId?: number;
+  
+  /** 时间戳 */
+  timestamp?: number;
+  
   /** 元数据 */
   meta: CheckpointMeta;
   
@@ -436,32 +473,42 @@ export interface EventStore {
   /**
    * 追加事件
    */
-  append(event: RecordedEvent): Promise<void>;
+  append(event: RecordedEvent | BaseEvent): void;
   
   /**
    * 从指定序列号开始读取
    */
-  readFrom(sequenceId: string): AsyncIterable<RecordedEvent>;
+  readFrom?(sequenceId: string): AsyncIterable<RecordedEvent>;
   
   /**
    * 获取最新事件
    */
-  latest(): Promise<RecordedEvent | undefined>;
+  latest?(): Promise<RecordedEvent | undefined>;
   
   /**
    * 创建检查点
    */
-  createCheckpoint(snapshot: CheckpointSnapshot): Promise<string>;
+  createCheckpoint?(snapshot: CheckpointSnapshot): Promise<string>;
   
   /**
    * 加载检查点
    */
-  loadCheckpoint(checkpointId: string): Promise<CheckpointSnapshot>;
+  loadCheckpoint?(checkpointId: string): CheckpointSnapshot;
   
   /**
    * 列出检查点
    */
-  listCheckpoints(sessionId?: string): Promise<CheckpointMeta[]>;
+  listCheckpoints?(sessionId?: string): CheckpointMeta[];
+  
+  /**
+   * 创建检查点 (简化版)
+   */
+  checkpoint(id: string): CheckpointMeta;
+  
+  /**
+   * 清空存储
+   */
+  clear(): void;
   
   /**
    * 获取事件统计

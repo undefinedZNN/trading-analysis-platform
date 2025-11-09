@@ -41,6 +41,11 @@ import { BusStateMachine } from './state-machine';
  */
 export interface EventBusConfig {
   /**
+   * 会话ID
+   */
+  sessionId?: string;
+
+  /**
    * 缓冲区大小（默认 10000）
    */
   bufferSize?: number;
@@ -69,7 +74,7 @@ export interface EventBusConfig {
 /**
  * EventBus 核心实现
  */
-export class EventBus implements IEventBus {
+export class EventBus implements Partial<IEventBus> {
   // === 核心 Subjects ===
   private readonly eventSubject: Subject<BaseEvent>;
   private readonly controlSubject: Subject<ControlEvent>;
@@ -79,6 +84,7 @@ export class EventBus implements IEventBus {
 
   // === 状态管理 ===
   private readonly stateMachine: BusStateMachine;
+  private currentState: BusState;
   private readonly store: EventStore;
   private readonly config: Required<EventBusConfig>;
 
@@ -98,14 +104,16 @@ export class EventBus implements IEventBus {
   constructor(store: EventStore, config: EventBusConfig = {}) {
     // 初始化配置
     this.config = {
+      sessionId: config.sessionId ?? 'default',
       bufferSize: config.bufferSize ?? 10000,
       backpressureThreshold: config.backpressureThreshold ?? 0.8,
       batchWindowMs: config.batchWindowMs ?? 50,
       enableDeadLetter: config.enableDeadLetter ?? true,
       defaultRetryPolicy: config.defaultRetryPolicy ?? {
         maxRetries: 3,
-        retryDelayMs: 100,
-        backoffMultiplier: 2,
+        initialDelay: 100,
+        maxDelay: 10000,
+        backoffFactor: 2,
       },
     };
 
@@ -117,6 +125,7 @@ export class EventBus implements IEventBus {
 
     // 初始化状态
     this.stateMachine = new BusStateMachine();
+    this.currentState = this.stateMachine.createInitialState('default-session');
     this.store = store;
     this.eventCount = 0;
     this.errorCount = 0;
@@ -126,9 +135,8 @@ export class EventBus implements IEventBus {
 
     // 初始化 state subject
     this.stateSubject = new BehaviorSubject<BusState>({
-      status: this.stateMachine.getStatus(),
+      ...this.currentState,
       eventCount: 0,
-      errorCount: 0,
       bufferUsage: 0,
       backpressure: false,
     });
@@ -149,7 +157,7 @@ export class EventBus implements IEventBus {
   private createEventPipeline(): Observable<BaseEvent> {
     return this.eventSubject.pipe(
       // 检查是否处于运行状态
-      filter(() => this.stateMachine.getStatus() === 'running'),
+      filter(() => this.currentState.status === 'running'),
 
       // 记录事件到 store
       tap((event) => this.recordEvent(event)),
@@ -230,13 +238,13 @@ export class EventBus implements IEventBus {
 
       case 'CHECKPOINT':
         if (payload?.checkpointId) {
-          this.checkpoint(payload.checkpointId);
+          this.checkpoint(payload.checkpointId as string);
         }
         break;
 
       case 'SEEK':
         if (payload?.eventId !== undefined) {
-          this.seek(payload.eventId);
+          this.seek(payload.eventId as number);
         }
         break;
 
@@ -250,7 +258,7 @@ export class EventBus implements IEventBus {
    */
   private recordEvent(event: BaseEvent): void {
     try {
-      this.store.append(event);
+      this.store.append(event as any);
       this.eventCount++;
       this.lastEventTime = Date.now();
     } catch (error) {
@@ -267,9 +275,8 @@ export class EventBus implements IEventBus {
     const backpressure = bufferUsage >= this.config.backpressureThreshold;
 
     this.stateSubject.next({
-      status: this.stateMachine.getStatus(),
+      ...this.currentState,
       eventCount: this.eventCount,
-      errorCount: this.errorCount,
       bufferUsage,
       backpressure,
     });
@@ -322,7 +329,7 @@ export class EventBus implements IEventBus {
    * 发布事件
    */
   publish(event: BaseEvent): void {
-    if (this.stateMachine.getStatus() === 'stopped') {
+    if (this.currentState.status === 'stopped') {
       throw new Error('Cannot publish event: EventBus is stopped');
     }
 
@@ -332,28 +339,36 @@ export class EventBus implements IEventBus {
   /**
    * 订阅事件
    */
-  subscribe(
+  subscribe<T = unknown>(
     eventType: EventType | EventType[],
     options: SubscriptionOptions = {}
-  ): Observable<BaseEvent> {
+  ): Observable<BaseEvent<T>> {
     const types = Array.isArray(eventType) ? eventType : [eventType];
 
-    return this.event$.pipe(
-      filter((event) => types.includes(event.type)),
-      options.predicate ? filter(options.predicate) : tap(),
-      options.batchSize
-        ? bufferTime(this.config.batchWindowMs, undefined, options.batchSize)
-        : tap(),
-      options.batchSize ? mergeMap((batch) => batch) : tap()
+    let stream = this.event$.pipe(
+      filter((event) => types.includes(event.eventType))
     );
+
+    if (options.predicate) {
+      stream = stream.pipe(filter(options.predicate));
+    }
+
+    if (options.batchSize) {
+      stream = stream.pipe(
+        bufferTime(this.config.batchWindowMs, undefined, options.batchSize),
+        mergeMap((batch: BaseEvent[]) => batch)
+      );
+    }
+
+    return stream as Observable<BaseEvent<T>>;
   }
 
   /**
    * 启动事件总线
    */
   start(): void {
-    if (this.stateMachine.canTransition('start')) {
-      this.stateMachine.transition('start');
+    if (this.stateMachine.canTransition(this.currentState.status, 'running')) {
+      this.currentState = this.stateMachine.transition(this.currentState, 'running');
       this.startTime = Date.now();
 
       console.log('[EventBus] Started');
@@ -366,8 +381,8 @@ export class EventBus implements IEventBus {
    * 暂停事件总线
    */
   pause(): void {
-    if (this.stateMachine.canTransition('pause')) {
-      this.stateMachine.transition('pause');
+    if (this.stateMachine.canTransition(this.currentState.status, 'paused')) {
+      this.currentState = this.stateMachine.transition(this.currentState, 'paused');
 
       console.log('[EventBus] Paused');
 
@@ -379,8 +394,8 @@ export class EventBus implements IEventBus {
    * 恢复事件总线
    */
   resume(): void {
-    if (this.stateMachine.canTransition('resume')) {
-      this.stateMachine.transition('resume');
+    if (this.stateMachine.canTransition(this.currentState.status, 'running')) {
+      this.currentState = this.stateMachine.transition(this.currentState, 'running');
 
       console.log('[EventBus] Resumed');
 
@@ -392,8 +407,8 @@ export class EventBus implements IEventBus {
    * 停止事件总线
    */
   stop(): void {
-    if (this.stateMachine.canTransition('stop')) {
-      this.stateMachine.transition('stop');
+    if (this.stateMachine.canTransition(this.currentState.status, 'stopped')) {
+      this.currentState = this.stateMachine.transition(this.currentState, 'stopped');
 
       console.log('[EventBus] Stopped');
 
@@ -405,8 +420,8 @@ export class EventBus implements IEventBus {
    * 重置事件总线
    */
   reset(): void {
-    if (this.stateMachine.canTransition('reset')) {
-      this.stateMachine.transition('reset');
+    if (this.stateMachine.canTransition(this.currentState.status, 'idle')) {
+      this.currentState = this.stateMachine.transition(this.currentState, 'idle');
 
       // 清空统计
       this.eventCount = 0;
@@ -450,7 +465,7 @@ export class EventBus implements IEventBus {
    * 获取当前运行状态
    */
   getStatus(): RunStatus {
-    return this.stateMachine.getStatus();
+    return this.currentState.status;
   }
 
   /**
@@ -469,7 +484,7 @@ export class EventBus implements IEventBus {
       totalProcessed: this.eventCount,
       deadLetterCount: this.deadLetterCount,
       subscriptionCount: 0, // Not tracked in this implementation
-      eventsByType: {}, // Not tracked in this implementation
+      eventsByType: {} as any, // Not tracked in this implementation
       avgProcessingLatency: 0, // Not tracked in this implementation
       // Legacy/alias properties
       totalEvents: this.eventCount,

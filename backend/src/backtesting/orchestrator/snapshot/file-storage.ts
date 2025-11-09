@@ -97,8 +97,9 @@ export class FileStorage implements SnapshotStorage {
    * 保存快照
    * 
    * @param snapshot 快照数据
+   * @returns 保存的文件路径
    */
-  async save(snapshot: SessionSnapshot): Promise<void> {
+  async save(snapshot: SessionSnapshot): Promise<string> {
     const { sessionId, checkpointId } = snapshot.meta;
     
     try {
@@ -126,6 +127,8 @@ export class FileStorage implements SnapshotStorage {
       // 设置文件权限
       await fs.chmod(snapshotPath, this.config.fileMode);
       await fs.chmod(metaPath, this.config.fileMode);
+      
+      return snapshotPath;
     } catch (error) {
       throw new SnapshotStorageError(
         `Failed to save snapshot: ${sessionId}/${checkpointId}`,
@@ -172,8 +175,9 @@ export class FileStorage implements SnapshotStorage {
    * 
    * @param sessionId 会话ID
    * @param checkpointId 检查点ID
+   * @returns 是否成功
    */
-  async delete(sessionId: string, checkpointId: string): Promise<void> {
+  async delete(sessionId: string, checkpointId: string): Promise<boolean> {
     try {
       // 获取文件锁
       await this.acquireLock(sessionId, checkpointId);
@@ -185,6 +189,8 @@ export class FileStorage implements SnapshotStorage {
       // 删除文件（带重试）
       await this.deleteFileWithRetry(snapshotPath);
       await this.deleteFileWithRetry(metaPath);
+      
+      return true;
     } catch (error) {
       throw new SnapshotStorageError(
         `Failed to delete snapshot: ${sessionId}/${checkpointId}`,
@@ -273,11 +279,17 @@ export class FileStorage implements SnapshotStorage {
    * 清理会话的所有快照
    * 
    * @param sessionId 会话ID
+   * @returns 清理的快照数量
    */
-  async cleanup(sessionId: string): Promise<void> {
+  async cleanup(sessionId: string): Promise<number> {
     try {
+      const snapshots = await this.list(sessionId);
+      const count = snapshots.length;
+      
       const sessionDir = this.getSessionDir(sessionId);
       await this.deleteDirectoryRecursive(sessionDir);
+      
+      return count;
     } catch (error) {
       throw new SnapshotStorageError(
         `Failed to cleanup session: ${sessionId}`,
@@ -292,18 +304,26 @@ export class FileStorage implements SnapshotStorage {
    * @param sessionId 会话ID
    * @returns 统计信息
    */
-  async getStats(sessionId: string): Promise<{
-    count: number;
+  async getStats(sessionId?: string): Promise<{
+    totalSnapshots: number;
     totalSize: number;
-    oldestSnapshot?: SnapshotMeta;
-    newestSnapshot?: SnapshotMeta;
+    oldestSnapshot?: string;
+    newestSnapshot?: string;
   }> {
     try {
-      const metaList = await this.list(sessionId, { sortBy: 'createdAt', sortOrder: 'asc' });
+      if (!sessionId) {
+        // 如果没有指定sessionId,返回所有会话的统计
+        return { totalSnapshots: 0, totalSize: 0 };
+      }
+      
+      const metaList = await this.list(sessionId);
       
       if (metaList.length === 0) {
-        return { count: 0, totalSize: 0 };
+        return { totalSnapshots: 0, totalSize: 0 };
       }
+      
+      // 按创建时间排序
+      const sorted = [...metaList].sort((a, b) => a.createdAt - b.createdAt);
       
       // 计算总大小
       let totalSize = 0;
@@ -314,10 +334,10 @@ export class FileStorage implements SnapshotStorage {
       }
       
       return {
-        count: metaList.length,
+        totalSnapshots: metaList.length,
         totalSize,
-        oldestSnapshot: metaList[0],
-        newestSnapshot: metaList[metaList.length - 1],
+        oldestSnapshot: sorted[0]?.checkpointId,
+        newestSnapshot: sorted[sorted.length - 1]?.checkpointId,
       };
     } catch (error) {
       throw new SnapshotStorageError(
@@ -392,7 +412,9 @@ export class FileStorage implements SnapshotStorage {
       sessionId: snapshot.meta.sessionId,
       checkpointId: snapshot.meta.checkpointId,
       createdAt: snapshot.meta.createdAt,
+      status: snapshot.meta.status,
       version: snapshot.meta.version,
+      compressed: true,
       tags: snapshot.meta.tags,
     };
   }
