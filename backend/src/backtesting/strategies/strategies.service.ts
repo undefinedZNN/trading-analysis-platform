@@ -119,8 +119,12 @@ export class StrategiesService {
   }
 
   async listStrategyTags() {
+    // 使用 jsonb_array_elements_text 来展开 jsonb 数组
     const rows: Array<{ tag: string | null }> = await this.strategyRepository.query(
-      `SELECT DISTINCT UNNEST(tags) AS tag FROM strategies WHERE cardinality(tags) > 0 ORDER BY tag ASC`,
+      `SELECT DISTINCT jsonb_array_elements_text(tags) AS tag 
+       FROM strategies 
+       WHERE jsonb_array_length(tags) > 0 
+       ORDER BY tag ASC`,
     );
     const tags = rows
       .map((row) => (row?.tag ?? '').trim())

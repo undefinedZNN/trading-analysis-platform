@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Linter } from 'eslint';
 import * as ts from 'typescript';
 import * as tsEslintPlugin from '@typescript-eslint/eslint-plugin';
+import * as path from 'path';
 
 export interface ScriptValidationMessage {
   type: 'typescript' | 'eslint';
@@ -23,6 +24,10 @@ const SDK_ALT_MODULE_NAME = '@backtesting/sdk';
 const SDK_DECLARATION_FILE =
   'node_modules/@platform/backtesting-sdk/index.d.ts';
 
+// 新策略框架的模块路径
+const STRATEGY_INTERFACES_FILE = './interfaces.d.ts';
+const STRATEGY_UTILS_FILE = './utils.d.ts';
+
 @Injectable()
 export class StrategyScriptValidator {
   private readonly linter: Linter;
@@ -43,13 +48,48 @@ export class StrategyScriptValidator {
   }
 
   async validate(sourceCode: string): Promise<ScriptValidationResult> {
-    const tsResult = this.runTypeScriptDiagnostics(sourceCode);
-    const eslintResult = await this.runLintDiagnostics(sourceCode);
+    // 预处理：替换路径别名
+    const processedCode = this.preprocessImports(sourceCode);
+    
+    const tsResult = this.runTypeScriptDiagnostics(processedCode);
+    const eslintResult = await this.runLintDiagnostics(processedCode);
 
     return {
       errors: [...tsResult.errors, ...eslintResult.errors],
       warnings: [...tsResult.warnings, ...eslintResult.warnings],
     };
+  }
+
+  /**
+   * 预处理导入语句，替换路径别名
+   * 与 compiler.service.ts 中的实现保持一致
+   */
+  private preprocessImports(code: string): string {
+    // 替换 @/backtesting/strategy/ 为相对路径
+    let processed = code;
+
+    // 替换导入语句中的路径别名
+    const importRegex = /from\s+['"](@\/[^'"]+)['"]/g;
+    processed = processed.replace(importRegex, (match, importPath) => {
+      // @/backtesting/strategy/interfaces -> ./interfaces
+      if (importPath.startsWith('@/backtesting/strategy/')) {
+        const relativePath = './' + importPath.replace('@/backtesting/strategy/', '');
+        return match.replace(importPath, relativePath);
+      }
+      // @/backtesting/ -> ../
+      if (importPath.startsWith('@/backtesting/')) {
+        const relativePath = '../' + importPath.replace('@/backtesting/', '');
+        return match.replace(importPath, relativePath);
+      }
+      // @/ -> ../../
+      if (importPath.startsWith('@/')) {
+        const relativePath = '../../' + importPath.replace('@/', '');
+        return match.replace(importPath, relativePath);
+      }
+      return match;
+    });
+
+    return processed;
   }
 
   private runTypeScriptDiagnostics(
@@ -97,6 +137,49 @@ export const parameter: ParameterFactory;
 export const factor: FactorFactory;
 `,
       ],
+      [
+        STRATEGY_INTERFACES_FILE,
+        `
+// 策略接口类型声明
+export interface StrategyContext {
+  strategyId: string;
+  getParameters<T = any>(): T;
+  getFeature(bar: any, featureId: string): any;
+  getPosition(symbol: string): any;
+  getPortfolio(): any;
+  publishIntent(intent: any): void;
+  log(level: string, message: string, meta?: any): void;
+  metrics: {
+    increment(name: string, value?: number, tags?: any): void;
+    gauge(name: string, value: number, tags?: any): void;
+  };
+}
+
+export interface MarketBarPayload {
+  timestamp: string;
+  symbol: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+}
+
+export interface StrategyLifecycle {
+  onInit?(ctx: StrategyContext): void;
+  onBar?(ctx: StrategyContext, bar: MarketBarPayload): void;
+  onStop?(ctx: StrategyContext, reason: string): void;
+  onError?(ctx: StrategyContext, error: Error): void;
+}
+`,
+      ],
+      [
+        STRATEGY_UTILS_FILE,
+        `
+// 策略工具函数类型声明
+export declare function defineParameters(params: Record<string, any>): Record<string, any>;
+`,
+      ],
     ]);
 
     const defaultHost = ts.createCompilerHost(compilerOptions, true);
@@ -137,12 +220,30 @@ export const factor: FactorFactory;
         files.has(fileName) || defaultFileExists(fileName),
       resolveModuleNames: (moduleNames, containingFile) =>
         moduleNames.map((moduleName) => {
+          // 旧 SDK 模块
           if (
             moduleName === SDK_MODULE_NAME ||
             moduleName === SDK_ALT_MODULE_NAME
           ) {
             return {
               resolvedFileName: SDK_DECLARATION_FILE,
+              extension: ts.Extension.Dts,
+              isExternalLibraryImport: false,
+            };
+          }
+
+          // 新策略框架模块
+          if (moduleName === './interfaces') {
+            return {
+              resolvedFileName: STRATEGY_INTERFACES_FILE,
+              extension: ts.Extension.Dts,
+              isExternalLibraryImport: false,
+            };
+          }
+
+          if (moduleName === './utils') {
+            return {
+              resolvedFileName: STRATEGY_UTILS_FILE,
               extension: ts.Extension.Dts,
               isExternalLibraryImport: false,
             };

@@ -33,7 +33,10 @@ interface ParsedStrategySchema {
 export class StrategyScriptParser {
   parse(sourceCode: string): ParsedStrategySchema {
     try {
-      const transpiled = ts.transpileModule(sourceCode, {
+      // 预处理：替换路径别名
+      const processedCode = this.preprocessImports(sourceCode);
+      
+      const transpiled = ts.transpileModule(processedCode, {
         compilerOptions: {
           target: ts.ScriptTarget.ES2019,
           module: ts.ModuleKind.CommonJS,
@@ -57,11 +60,20 @@ export class StrategyScriptParser {
         exports: moduleExports,
         module: { exports: moduleExports },
         require: (moduleName: string) => {
+          // 旧 SDK 模块
           if (
             moduleName === '@platform/backtesting-sdk' ||
             moduleName === '@backtesting/sdk'
           ) {
             return sdkStub;
+          }
+          // 新策略框架模块 (已经被预处理为相对路径)
+          if (
+            moduleName === './interfaces' ||
+            moduleName === './utils' ||
+            moduleName === './context'
+          ) {
+            return sdkStub; // 返回相同的 stub
           }
           throw new Error(
             `不允许在回测脚本中引用模块：${moduleName}`,
@@ -88,13 +100,19 @@ export class StrategyScriptParser {
       const resolved =
         exported?.default ?? exported?.strategy ?? exported;
 
-      if (
-        !resolved ||
-        typeof resolved !== 'object' ||
-        typeof resolved.run !== 'function'
-      ) {
+      // 检查是否是新的策略框架格式 (有生命周期钩子)
+      const isNewFormat = resolved && typeof resolved === 'object' && (
+        typeof resolved.onInit === 'function' ||
+        typeof resolved.onBar === 'function' ||
+        typeof resolved.onStop === 'function'
+      );
+
+      // 检查是否是旧的策略框架格式 (有 run 函数)
+      const isOldFormat = resolved && typeof resolved === 'object' && typeof resolved.run === 'function';
+
+      if (!resolved || typeof resolved !== 'object' || (!isNewFormat && !isOldFormat)) {
         throw new Error(
-          '策略脚本需要通过 defineStrategy 导出包含 run 函数的对象。',
+          '策略脚本需要导出包含生命周期函数(onInit/onBar/onStop)或run函数的对象。',
         );
       }
 
@@ -108,8 +126,41 @@ export class StrategyScriptParser {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : '脚本解析失败';
+      console.error('[StrategyScriptParser] 解析失败:', error);
       throw new BadRequestException(message);
     }
+  }
+
+  /**
+   * 预处理导入语句，替换路径别名
+   * 与 compiler.service.ts 和 validator.ts 中的实现保持一致
+   */
+  private preprocessImports(code: string): string {
+    // 替换 @/backtesting/strategy/ 为相对路径
+    let processed = code;
+
+    // 替换导入语句中的路径别名
+    const importRegex = /from\s+['"](@\/[^'"]+)['"]/g;
+    processed = processed.replace(importRegex, (match, importPath) => {
+      // @/backtesting/strategy/interfaces -> ./interfaces
+      if (importPath.startsWith('@/backtesting/strategy/')) {
+        const relativePath = './' + importPath.replace('@/backtesting/strategy/', '');
+        return match.replace(importPath, relativePath);
+      }
+      // @/backtesting/ -> ../
+      if (importPath.startsWith('@/backtesting/')) {
+        const relativePath = '../' + importPath.replace('@/backtesting/', '');
+        return match.replace(importPath, relativePath);
+      }
+      // @/ -> ../../
+      if (importPath.startsWith('@/')) {
+        const relativePath = '../../' + importPath.replace('@/', '');
+        return match.replace(importPath, relativePath);
+      }
+      return match;
+    });
+
+    return processed;
   }
 
   private createSdkStub(target: {
@@ -233,10 +284,21 @@ export class StrategyScriptParser {
       return config;
     };
 
+    // 新策略框架的 defineParameters 函数
+    const defineParameters = (params: Record<string, any>) => {
+      // 新格式的参数定义不需要收集到 target.parameters
+      // 因为新格式使用不同的参数结构
+      // 这里只是返回参数定义,不做收集
+      return params;
+    };
+
     return {
+      // 旧格式
       defineStrategy,
       parameter: parameterFactories,
       factor: factorFactories,
+      // 新格式
+      defineParameters,
     };
   }
 

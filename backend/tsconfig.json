@@ -24,5 +24,14 @@
       "@common/*": ["src/common/*"],
       "@entities/*": ["src/entities/*"]
     }
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "**/__tests__/**",
+    "**/tests/**",
+    "**/examples/**"
+  ]
 }

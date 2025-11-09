@@ -26,10 +26,10 @@ import { VersionManager, type VersionManagerConfig } from './version-manager';
 export interface ModuleStateCollector {
   /** 模块名称 */
   moduleName: string;
-  
+
   /** 收集状态 */
   collectState(): Promise<any>;
-  
+
   /** 恢复状态 */
   restoreState?(state: any): Promise<void>;
 }
@@ -40,16 +40,16 @@ export interface ModuleStateCollector {
 export interface SnapshotManagerConfig {
   /** 存储引擎 */
   storage: SnapshotStorage;
-  
+
   /** 快照版本 */
   version?: string;
-  
+
   /** 版本管理器配置 */
   versionConfig?: VersionManagerConfig;
-  
+
   /** 是否自动清理 */
   autoCleanup?: boolean;
-  
+
   /** 是否启用增量快照 */
   incrementalSnapshot?: boolean;
 }
@@ -65,7 +65,7 @@ export class SnapshotManager {
   private config: Required<Omit<SnapshotManagerConfig, 'storage' | 'versionConfig'>>;
   private collectors: Map<string, ModuleStateCollector> = new Map();
   private lastSnapshot: SessionSnapshot | null = null;
-  
+
   /**
    * 构造函数
    * 
@@ -80,7 +80,7 @@ export class SnapshotManager {
       incrementalSnapshot: config.incrementalSnapshot ?? false,
     };
   }
-  
+
   /**
    * 注册模块状态收集器
    * 
@@ -89,7 +89,7 @@ export class SnapshotManager {
   registerCollector(collector: ModuleStateCollector): void {
     this.collectors.set(collector.moduleName, collector);
   }
-  
+
   /**
    * 注销模块状态收集器
    * 
@@ -98,7 +98,7 @@ export class SnapshotManager {
   unregisterCollector(moduleName: string): void {
     this.collectors.delete(moduleName);
   }
-  
+
   /**
    * 创建快照
    * 
@@ -119,22 +119,22 @@ export class SnapshotManager {
     try {
       // 生成检查点ID
       const checkpointId = this.generateCheckpointId(sessionId);
-      
+
       // 检查快照是否已存在
       const exists = await this.storage.exists(sessionId, checkpointId);
       if (exists) {
         throw new SnapshotAlreadyExistsError(sessionId, checkpointId);
       }
-      
+
       // 收集所有模块状态
       const modules = await this.collectAllModuleStates();
-      
+
       // 如果启用增量快照，计算差异
       let finalModules = modules;
       if (this.config.incrementalSnapshot && this.lastSnapshot) {
         finalModules = this.calculateIncremental(modules, this.lastSnapshot.modules);
       }
-      
+
       // 创建快照
       const snapshot: SessionSnapshot = {
         meta: {
@@ -153,18 +153,18 @@ export class SnapshotManager {
           processedCount: 0,
         },
       };
-      
+
       // 保存快照
       await this.storage.save(snapshot);
-      
+
       // 记录最后一个快照
       this.lastSnapshot = snapshot;
-      
+
       // 自动清理
       if (this.config.autoCleanup) {
         await this.autoCleanup(sessionId);
       }
-      
+
       return checkpointId;
     } catch (error) {
       if (error instanceof SnapshotError) {
@@ -173,7 +173,7 @@ export class SnapshotManager {
       throw new SnapshotError(`Failed to create snapshot: ${error}`);
     }
   }
-  
+
   /**
    * 加载快照
    * 
@@ -188,17 +188,17 @@ export class SnapshotManager {
       if (!exists) {
         throw new SnapshotNotFoundError(sessionId, checkpointId);
       }
-      
+
       // 加载快照
       const snapshot = await this.storage.load(sessionId, checkpointId);
-      
+
       // 验证版本
       if (!this.versionManager.validateVersion(snapshot.meta, this.config.version)) {
         console.warn(
           `Snapshot version mismatch: expected ${this.config.version}, got ${snapshot.meta.version}`
         );
       }
-      
+
       return snapshot;
     } catch (error) {
       if (error instanceof SnapshotError) {
@@ -207,7 +207,7 @@ export class SnapshotManager {
       throw new SnapshotError(`Failed to load snapshot: ${error}`);
     }
   }
-  
+
   /**
    * 恢复快照
    * 
@@ -218,10 +218,10 @@ export class SnapshotManager {
     try {
       // 加载快照
       const snapshot = await this.loadSnapshot(sessionId, checkpointId);
-      
+
       // 恢复所有模块状态
       await this.restoreAllModuleStates(snapshot.modules);
-      
+
       // 记录最后一个快照
       this.lastSnapshot = snapshot;
     } catch (error) {
@@ -231,7 +231,7 @@ export class SnapshotManager {
       throw new SnapshotError(`Failed to restore snapshot: ${error}`);
     }
   }
-  
+
   /**
    * 列出快照
    * 
@@ -248,7 +248,7 @@ export class SnapshotManager {
       throw new SnapshotError(`Failed to list snapshots: ${error}`);
     }
   }
-  
+
   /**
    * 删除快照
    * 
@@ -262,7 +262,7 @@ export class SnapshotManager {
       throw new SnapshotError(`Failed to delete snapshot: ${error}`);
     }
   }
-  
+
   /**
    * 验证快照
    * 
@@ -277,34 +277,34 @@ export class SnapshotManager {
       if (!exists) {
         return false;
       }
-      
+
       // 加载并验证
       const snapshot = await this.storage.load(sessionId, checkpointId);
-      
+
       // 验证版本
       if (!this.versionManager.validateVersion(snapshot.meta)) {
         return false;
       }
-      
+
       // 验证必需字段
       if (!snapshot.meta.sessionId || !snapshot.meta.checkpointId) {
         return false;
       }
-      
+
       if (!snapshot.modules || typeof snapshot.modules !== 'object') {
         return false;
       }
-      
+
       if (!snapshot.eventStoreCheckpoint) {
         return false;
       }
-      
+
       return true;
     } catch (error) {
       return false;
     }
   }
-  
+
   /**
    * 清理会话的所有快照
    * 
@@ -317,7 +317,7 @@ export class SnapshotManager {
       throw new SnapshotError(`Failed to cleanup snapshots: ${error}`);
     }
   }
-  
+
   /**
    * 获取统计信息
    * 
@@ -336,15 +336,15 @@ export class SnapshotManager {
       throw new SnapshotError(`Failed to get stats: ${error}`);
     }
   }
-  
+
   // ========== 私有方法 ==========
-  
+
   /**
    * 收集所有模块状态
    */
   private async collectAllModuleStates(): Promise<Record<string, ModuleSnapshot>> {
     const modules: Record<string, ModuleSnapshot> = {};
-    
+
     for (const [name, collector] of this.collectors) {
       try {
         const state = await collector.collectState();
@@ -357,10 +357,10 @@ export class SnapshotManager {
         // 继续收集其他模块
       }
     }
-    
+
     return modules;
   }
-  
+
   /**
    * 恢复所有模块状态
    */
@@ -371,12 +371,12 @@ export class SnapshotManager {
         console.warn(`No collector registered for module ${name}`);
         continue;
       }
-      
+
       if (!collector.restoreState) {
         console.warn(`Module ${name} does not support state restoration`);
         continue;
       }
-      
+
       try {
         await collector.restoreState(moduleSnapshot.state);
       } catch (error) {
@@ -385,7 +385,7 @@ export class SnapshotManager {
       }
     }
   }
-  
+
   /**
    * 计算增量快照
    */
@@ -394,17 +394,17 @@ export class SnapshotManager {
     previous: Record<string, ModuleSnapshot>
   ): Record<string, ModuleSnapshot> {
     const incremental: Record<string, ModuleSnapshot> = {};
-    
+
     for (const [name, snapshot] of Object.entries(current)) {
       const prevSnapshot = previous[name];
-      
+
       if (!prevSnapshot) {
         // 新模块，完整保存
         incremental[name] = snapshot;
       } else {
         // 比较状态
         const hasChanged = JSON.stringify(snapshot.state) !== JSON.stringify(prevSnapshot.state);
-        
+
         if (hasChanged) {
           // 状态已变化，保存新状态
           incremental[name] = snapshot;
@@ -412,27 +412,27 @@ export class SnapshotManager {
         // 未变化的模块不保存
       }
     }
-    
+
     return incremental;
   }
-  
+
   /**
    * 自动清理
    */
   private async autoCleanup(sessionId: string): Promise<void> {
     try {
       const snapshots = await this.listSnapshots(sessionId);
-      
+
       if (!this.versionManager.shouldCleanup(snapshots)) {
         return;
       }
-      
+
       const decision = this.versionManager.decideCleanup(snapshots);
-      
+
       for (const snapshot of decision.toDelete) {
         await this.deleteSnapshot(sessionId, snapshot.checkpointId);
       }
-      
+
       if (decision.toDelete.length > 0) {
         console.log(
           `Auto cleanup: deleted ${decision.toDelete.length} snapshots. Reason: ${decision.reason}`
@@ -443,7 +443,7 @@ export class SnapshotManager {
       // 不抛出错误，避免影响快照创建
     }
   }
-  
+
   /**
    * 生成检查点ID
    */
