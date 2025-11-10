@@ -1,0 +1,53 @@
+/**
+ * 版本对比页面样式
+ */
+
+.version-compare-page {
+  padding: 24px;
+  background-color: #f0f2f5;
+  min-height: 100vh;
+
+  .version-selector-card {
+    margin-bottom: 24px;
+    background-color: #fafafa;
+  }
+
+  .compare-result-card {
+    margin-top: 24px;
+
+    .ant-tabs {
+      .ant-tabs-tab {
+        font-size: 14px;
+        font-weight: 500;
+      }
+    }
+
+    ul {
+      padding-left: 20px;
+      
+      li {
+        margin-bottom: 8px;
+        line-height: 1.8;
+      }
+    }
+  }
+}
+
+// 响应式设计
+@media (max-width: 768px) {
+  .version-compare-page {
+    padding: 12px;
+
+    .version-selector-card {
+      .ant-row {
+        flex-direction: column;
+
+        .ant-col {
+          width: 100%;
+          margin-bottom: 12px;
+        }
+      }
+    }
+  }
+}
+

@@ -22,6 +22,7 @@ import {
   ScriptValidationMessage,
   StrategyScriptValidator,
 } from './strategy-script.validator';
+import { VersionCompareService } from './services/version-compare.service';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;
@@ -35,6 +36,7 @@ export class StrategiesService {
     private readonly scriptVersionRepository: Repository<ScriptVersionEntity>,
     private readonly scriptParser: StrategyScriptParser,
     private readonly scriptValidator: StrategyScriptValidator,
+    private readonly versionCompareService: VersionCompareService,
   ) {}
 
   async listStrategies(query: ListStrategiesDto) {
@@ -323,6 +325,9 @@ export class StrategiesService {
     if (dto.setMaster) {
       await this.setMasterVersion(strategyId, scriptVersionId);
     }
+
+    // 清除缓存
+    this.versionCompareService.invalidateVersionCache(strategyId, scriptVersionId);
 
     return this.getStrategy(strategyId);
   }

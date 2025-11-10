@@ -17,10 +17,15 @@
     "antd": "^5.27.5",
     "axios": "^1.12.2",
     "dayjs": "^1.11.18",
+    "diff": "^8.0.2",
     "lightweight-charts": "^4.1.0",
+    "prism-react-renderer": "^2.4.1",
     "react": "^19.1.1",
+    "react-diff-view": "^3.3.2",
     "react-dom": "^19.1.1",
-    "react-router-dom": "^7.9.4"
+    "react-router-dom": "^7.9.4",
+    "refractor": "^5.0.0",
+    "unidiff": "^1.0.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
