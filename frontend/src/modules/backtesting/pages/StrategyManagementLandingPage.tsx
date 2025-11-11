@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   App,
@@ -18,7 +19,7 @@ import {
   Button,
   Switch,
 } from 'antd';
-import { CheckCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, ReloadOutlined, SearchOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import Editor from '@monaco-editor/react';
@@ -180,6 +181,7 @@ const changedFieldColumns: ColumnsType<ChangedField> = [
 
 function StrategyManagementLandingPage() {
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const [health, setHealth] = useState<BacktestingHealth | null>(null);
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [healthError, setHealthError] = useState<string | null>(null);
@@ -825,6 +827,18 @@ function StrategyManagementLandingPage() {
         render: (_, record) => (
           <Space size={8}>
             <Button
+              type="primary"
+              size="small"
+              icon={<PlayCircleOutlined />}
+              onClick={() => {
+                if (strategyId) {
+                  navigate(`/backtesting/execution/${strategyId}/${record.scriptVersionId}`);
+                }
+              }}
+            >
+              执行
+            </Button>
+            <Button
               size="small"
               onClick={() =>
                 strategyId &&
@@ -867,7 +881,7 @@ function StrategyManagementLandingPage() {
         ),
       },
     ];
-  }, [handleSetMaster, openVersionModal, selectedStrategyId, strategyDetail]);
+  }, [handleSetMaster, openVersionModal, selectedStrategyId, strategyDetail, navigate]);
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>

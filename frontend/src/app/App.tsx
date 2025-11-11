@@ -6,6 +6,7 @@ import AppLayout from './layouts/AppLayout';
 import ImportListPage from '../modules/trading-data/pages/ImportListPage';
 import DatasetListPage from '../modules/trading-data/pages/DatasetListPage';
 import StrategyManagementLandingPage from '../modules/backtesting/pages/StrategyManagementLandingPage';
+import { StrategyExecutionPage } from '../modules/backtesting/pages/StrategyExecutionPage';
 
 const menuItems = [
   {
@@ -83,6 +84,7 @@ function AppShell() {
             element={<DatasetListPage key={datasetRefreshCounter} />}
           />
           <Route path="/backtesting/strategies" element={<StrategyManagementLandingPage />} />
+          <Route path="/backtesting/execution/:strategyId/:versionId" element={<StrategyExecutionPage />} />
           <Route path="/" element={<Navigate to="/trading-data/imports" replace />} />
           <Route path="*" element={<Navigate to="/trading-data/imports" replace />} />
         </Routes>

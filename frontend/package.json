@@ -18,6 +18,7 @@
     "axios": "^1.12.2",
     "dayjs": "^1.11.18",
     "diff": "^8.0.2",
+    "echarts": "^6.0.0",
     "lightweight-charts": "^4.1.0",
     "prism-react-renderer": "^2.4.1",
     "react": "^19.1.1",
@@ -25,6 +26,7 @@
     "react-dom": "^19.1.1",
     "react-router-dom": "^7.9.4",
     "refractor": "^5.0.0",
+    "socket.io-client": "^4.8.1",
     "unidiff": "^1.0.4"
   },
   "devDependencies": {

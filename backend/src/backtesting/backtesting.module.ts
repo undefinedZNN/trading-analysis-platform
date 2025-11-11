@@ -13,11 +13,13 @@ import { SchemaDiffService } from './strategies/services/schema-diff.service';
 import { VersionCompareService } from './strategies/services/version-compare.service';
 import { CompareCacheService } from './strategies/services/compare-cache.service';
 import { StrategyModule } from './strategy/strategy.module';
+import { ExecutionModule } from './execution/execution.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([StrategyEntity, ScriptVersionEntity]),
     StrategyModule,
+    ExecutionModule,
   ],
   controllers: [BacktestingController, StrategiesController],
   providers: [
