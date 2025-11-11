@@ -13,6 +13,7 @@ import type {
   SnapshotStorage,
   SessionSnapshot,
   SnapshotMeta,
+  SnapshotListOptions,
 } from '../interfaces/snapshot';
 import { SnapshotStorageError } from '../interfaces/snapshot';
 import type { JsonSerializer } from './json-serializer';
@@ -41,20 +42,6 @@ export interface FileStorageConfig {
   
   /** 是否启用文件锁 */
   enableFileLock?: boolean;
-}
-
-/**
- * 快照列表选项
- */
-export interface ListSnapshotsOptions {
-  /** 限制返回数量 */
-  limit?: number;
-  
-  /** 排序方式 */
-  sortBy?: 'createdAt' | 'checkpointId';
-  
-  /** 排序顺序 */
-  sortOrder?: 'asc' | 'desc';
 }
 
 /**
@@ -98,7 +85,7 @@ export class FileStorage implements SnapshotStorage {
    * 
    * @param snapshot 快照数据
    */
-  async save(snapshot: SessionSnapshot): Promise<void> {
+  async save(snapshot: SessionSnapshot): Promise<string> {
     const { sessionId, checkpointId } = snapshot.meta;
     
     try {
@@ -126,6 +113,8 @@ export class FileStorage implements SnapshotStorage {
       // 设置文件权限
       await fs.chmod(snapshotPath, this.config.fileMode);
       await fs.chmod(metaPath, this.config.fileMode);
+
+      return snapshotPath;
     } catch (error) {
       throw new SnapshotStorageError(
         `Failed to save snapshot: ${sessionId}/${checkpointId}`,
@@ -173,7 +162,7 @@ export class FileStorage implements SnapshotStorage {
    * @param sessionId 会话ID
    * @param checkpointId 检查点ID
    */
-  async delete(sessionId: string, checkpointId: string): Promise<void> {
+  async delete(sessionId: string, checkpointId: string): Promise<boolean> {
     try {
       // 获取文件锁
       await this.acquireLock(sessionId, checkpointId);
@@ -185,6 +174,8 @@ export class FileStorage implements SnapshotStorage {
       // 删除文件（带重试）
       await this.deleteFileWithRetry(snapshotPath);
       await this.deleteFileWithRetry(metaPath);
+
+      return true;
     } catch (error) {
       throw new SnapshotStorageError(
         `Failed to delete snapshot: ${sessionId}/${checkpointId}`,
@@ -203,7 +194,7 @@ export class FileStorage implements SnapshotStorage {
    * @param options 列表选项
    * @returns 快照元数据列表
    */
-  async list(sessionId: string, options?: ListSnapshotsOptions): Promise<SnapshotMeta[]> {
+  async list(sessionId: string, options?: SnapshotListOptions): Promise<SnapshotMeta[]> {
     try {
       const sessionDir = this.getSessionDir(sessionId);
       
@@ -388,13 +379,7 @@ export class FileStorage implements SnapshotStorage {
    * 创建元数据
    */
   private createMetaData(snapshot: SessionSnapshot): SnapshotMeta {
-    return {
-      sessionId: snapshot.meta.sessionId,
-      checkpointId: snapshot.meta.checkpointId,
-      createdAt: snapshot.meta.createdAt,
-      version: snapshot.meta.version,
-      tags: snapshot.meta.tags,
-    };
+    return { ...snapshot.meta };
   }
   
   /**
@@ -576,4 +561,3 @@ export function createFileStorage(
 ): FileStorage {
   return new FileStorage(serializer, config);
 }
-

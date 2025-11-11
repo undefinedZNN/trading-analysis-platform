@@ -17,7 +17,7 @@ import type {
 } from './interfaces';
 import { ResultExportError } from './interfaces';
 import type { TradeRecord, TradeStats, LedgerService } from '../ledger/interfaces';
-import type { PerformanceCalculatorImpl as PerformanceCalculator } from './performance-calculator';
+import type { PerformanceCalculator } from './interfaces';
 import type { EquityCurveGenerator } from './equity-curve-generator';
 
 /**
@@ -461,4 +461,3 @@ export function createResultCollector(
 ): ResultCollector {
   return new ResultCollectorImpl(config);
 }
-

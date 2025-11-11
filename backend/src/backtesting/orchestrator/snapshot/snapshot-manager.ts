@@ -11,6 +11,7 @@ import type {
   SessionSnapshot,
   SnapshotMeta,
   ModuleSnapshot,
+  SnapshotManagerConfig,
 } from '../interfaces/snapshot';
 import {
   SnapshotError,
@@ -32,26 +33,6 @@ export interface ModuleStateCollector {
   
   /** 恢复状态 */
   restoreState?(state: any): Promise<void>;
-}
-
-/**
- * 快照管理器配置
- */
-export interface SnapshotManagerConfig {
-  /** 存储引擎 */
-  storage: SnapshotStorage;
-  
-  /** 快照版本 */
-  version?: string;
-  
-  /** 版本管理器配置 */
-  versionConfig?: VersionManagerConfig;
-  
-  /** 是否自动清理 */
-  autoCleanup?: boolean;
-  
-  /** 是否启用增量快照 */
-  incrementalSnapshot?: boolean;
 }
 
 /**
@@ -463,4 +444,3 @@ export class SnapshotManager {
 export function createSnapshotManager(config: SnapshotManagerConfig): SnapshotManager {
   return new SnapshotManager(config);
 }
-

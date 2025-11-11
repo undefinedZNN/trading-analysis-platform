@@ -101,7 +101,7 @@ describe('Metrics Helpers', () => {
     });
 
     it('should handle single return', () => {
-      expect(cumulativeReturn([0.1])).toBe(0.1);
+      expect(cumulativeReturn([0.1])).toBeCloseTo(0.1, 10);
     });
   });
 
@@ -189,7 +189,7 @@ describe('Metrics Helpers', () => {
       const annReturn = 0.15; // 15%
       const maxDD = 0.10; // 10%
       const result = calmarRatio(annReturn, maxDD);
-      expect(result).toBe(1.5);
+      expect(result).toBeCloseTo(1.5, 10);
     });
 
     it('should be zero for zero drawdown', () => {
@@ -493,4 +493,3 @@ describe('PerformanceCalculator', () => {
     });
   });
 });
-

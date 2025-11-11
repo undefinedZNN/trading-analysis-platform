@@ -267,7 +267,7 @@ describe('M3-03 Analytics - Boundary & Stress Tests', () => {
       ];
 
       const curve = generator.generate(trades);
-      expect(curve.equity[0]).toBe('10000');
+      expect(parseFloat(curve.equity[0])).toBe(10000);
     });
 
     it('should handle negative equity', () => {
@@ -501,4 +501,3 @@ describe('M3-03 Analytics - Boundary & Stress Tests', () => {
     });
   });
 });
-

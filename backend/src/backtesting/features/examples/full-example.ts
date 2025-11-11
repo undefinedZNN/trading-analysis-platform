@@ -7,6 +7,7 @@
 import { of } from 'rxjs';
 import { toArray } from 'rxjs/operators';
 import { createFeatureRegistry } from '../registry';
+import type { FeatureConfig } from '../interfaces';
 import {
   MAFeature,
   EMAFeature,
@@ -302,12 +303,12 @@ function example9_DependencyResolution() {
   registry.registerBatch(BUILT_IN_FEATURES);
   
   // 配置需要计算的特征
-  const configs = [
-    { featureId: 'MA', params: { window: 20 }, outputKey: 'MA_20' },
-    { featureId: 'EMA', params: { window: 50 }, outputKey: 'EMA_50' },
-    { featureId: 'RSI', params: { period: 14 }, outputKey: 'RSI_14' },
-    { featureId: 'ATR', params: { period: 14 }, outputKey: 'ATR_14' },
-    { featureId: 'ADX', params: { period: 14 }, outputKey: 'ADX_14' },
+  const configs: FeatureConfig[] = [
+    { id: 'MA', params: { window: 20 }, outputId: 'MA_20' },
+    { id: 'EMA', params: { window: 50 }, outputId: 'EMA_50' },
+    { id: 'RSI', params: { period: 14 }, outputId: 'RSI_14' },
+    { id: 'ATR', params: { period: 14 }, outputId: 'ATR_14' },
+    { id: 'ADX', params: { period: 14 }, outputId: 'ADX_14' },
   ];
   
   // 解析依赖
@@ -315,20 +316,22 @@ function example9_DependencyResolution() {
   
   console.log('特征计算顺序:');
   resolved.forEach((feature, index) => {
-    console.log(`${index + 1}. ${feature.id}`);
+    console.log(`${index + 1}. ${feature.definition.id}`);
     console.log(`   参数: ${JSON.stringify(feature.params)}`);
-    console.log(`   输出: ${feature.outputKeys.join(', ')}`);
-    console.log(`   依赖: ${feature.dependencies.map(d => d.ref).join(', ') || '无'}`);
+    console.log(`   输出ID: ${feature.outputId}`);
+    console.log(`   依赖: ${feature.dependencies.join(', ') || '无'}`);
   });
   
   // 生成特征目录
   const catalog = registry.generateCatalog(resolved);
   
   console.log('\n特征目录:');
-  console.log(`  总数: ${catalog.total}`);
-  console.log(`  按分类:`);
-  Object.entries(catalog.byCategory).forEach(([category, features]) => {
-    console.log(`    ${category}: ${features.length} 个`);
+  console.log(`  生成时间: ${catalog.generatedAt}`);
+  console.log(`  总数: ${catalog.features.length}`);
+  catalog.features.forEach((item, idx) => {
+    console.log(
+      `  ${idx + 1}. ${item.featureId} -> ${item.outputId} (${item.label})`
+    );
   });
 }
 
@@ -430,4 +433,3 @@ export {
   example9_DependencyResolution,
   example10_ComprehensiveStrategy,
 };
-

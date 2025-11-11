@@ -10,6 +10,9 @@ import type { SessionSnapshot } from '../interfaces/snapshot';
 import { SnapshotStorageError } from '../interfaces/snapshot';
 import * as os from 'os';
 
+const createTempDir = (prefix: string) =>
+  path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
 describe('FileStorage', () => {
   let storage: FileStorage;
   let serializer: JsonSerializer;
@@ -44,7 +47,7 @@ describe('FileStorage', () => {
   
   beforeEach(async () => {
     // 创建临时测试目录
-    testBaseDir = path.join(os.tmpdir(), `test-snapshots-${Date.now()}`);
+    testBaseDir = createTempDir('test-snapshots');
     
     serializer = new JsonSerializer();
     storage = new FileStorage(serializer, {
@@ -393,4 +396,3 @@ describe('FileStorage', () => {
     });
   });
 });
-

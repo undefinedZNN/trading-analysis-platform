@@ -216,6 +216,11 @@ export interface Session {
   
   /** 当前状态 */
   readonly state: SessionState;
+
+  /**
+   * 获取当前状态（兼容旧接口）
+   */
+  getState(): SessionState;
   
   /** 会话元数据 */
   readonly metadata: SessionMetadata;
@@ -354,4 +359,3 @@ export class SessionDestroyedError extends SessionError {
     this.name = 'SessionDestroyedError';
   }
 }
-

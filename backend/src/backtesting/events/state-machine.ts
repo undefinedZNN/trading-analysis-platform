@@ -28,16 +28,17 @@ export class BusStateMachine {
    * 状态转换规则
    * 每个状态可以转换到哪些状态
    */
-  private readonly transitions: ReadonlyMap<RunStatus, ReadonlySet<RunStatus>> = new Map([
-    ['idle', new Set(['initializing'])],
-    ['initializing', new Set(['running', 'error'])],
-    ['running', new Set(['paused', 'stopping', 'completed', 'error'])],
-    ['paused', new Set(['running', 'stopping'])],
-    ['stopping', new Set(['stopped', 'error'])],
-    ['stopped', new Set(['idle'])],
-    ['completed', new Set(['idle'])],
-    ['error', new Set(['idle', 'stopped'])],
-  ]);
+  private readonly transitions: ReadonlyMap<RunStatus, ReadonlySet<RunStatus>> =
+    new Map<RunStatus, ReadonlySet<RunStatus>>([
+      ['idle', new Set<RunStatus>(['initializing'])],
+      ['initializing', new Set<RunStatus>(['running', 'error'])],
+      ['running', new Set<RunStatus>(['paused', 'stopping', 'completed', 'error'])],
+      ['paused', new Set<RunStatus>(['running', 'stopping'])],
+      ['stopping', new Set<RunStatus>(['stopped', 'error'])],
+      ['stopped', new Set<RunStatus>(['idle'])],
+      ['completed', new Set<RunStatus>(['idle'])],
+      ['error', new Set<RunStatus>(['idle', 'stopped'])],
+    ]);
   
   /**
    * 终态集合（不能再转换的状态）
@@ -235,4 +236,3 @@ export class BusStateMachine {
  * 默认导出单例实例
  */
 export const busStateMachine = new BusStateMachine();
-

@@ -24,5 +24,10 @@
       "@common/*": ["src/common/*"],
       "@entities/*": ["src/entities/*"]
     }
-  }
+  },
+  "exclude": [
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "src/**/__tests__/**"
+  ]
 }

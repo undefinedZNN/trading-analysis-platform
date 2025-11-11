@@ -46,6 +46,8 @@ export interface CleanupDecision {
  */
 export class VersionManager {
   private config: Required<VersionManagerConfig>;
+  private lastTimestamp = 0;
+  private collisionCounter = 0;
   
   /**
    * 构造函数
@@ -213,8 +215,26 @@ export class VersionManager {
    */
   generateCheckpointId(sessionId: string, sequence?: number): string {
     const timestamp = Date.now();
-    const seq = sequence !== undefined ? sequence.toString().padStart(4, '0') : '';
-    return `${sessionId}-${timestamp}${seq ? '-' + seq : ''}`;
+    if (timestamp === this.lastTimestamp) {
+      this.collisionCounter += 1;
+    } else {
+      this.lastTimestamp = timestamp;
+      this.collisionCounter = 0;
+    }
+
+    const effectiveSequence =
+      sequence !== undefined
+        ? sequence
+        : this.collisionCounter > 0
+          ? this.collisionCounter
+          : undefined;
+
+    const seqPart =
+      effectiveSequence !== undefined
+        ? `-${effectiveSequence.toString().padStart(4, '0')}`
+        : '';
+
+    return `${sessionId}-${timestamp}${seqPart}`;
   }
 }
 
@@ -227,4 +247,3 @@ export class VersionManager {
 export function createVersionManager(config?: VersionManagerConfig): VersionManager {
   return new VersionManager(config);
 }
-

@@ -1,127 +1,106 @@
 /**
- * BusStateMachine 单元测试
+ * BusStateMachine 单元测试（基于 RunStatus/BusState API）
  */
 
-import { BusStateMachine } from '../state-machine';
-import type { RunStatus } from '../interfaces';
+import { BusStateMachine, StateTransitionError } from '../state-machine';
+import type { BusState, RunStatus } from '../interfaces';
 
 describe('BusStateMachine', () => {
-  let stateMachine: BusStateMachine;
+  let machine: BusStateMachine;
+  let state: BusState;
 
   beforeEach(() => {
-    stateMachine = new BusStateMachine();
+    machine = new BusStateMachine();
+    state = machine.createInitialState('session-1');
   });
 
-  describe('初始状态', () => {
-    it('should start in idle state', () => {
-      expect(stateMachine.getStatus()).toBe('idle');
+  it('should create initial idle state', () => {
+    expect(state.status).toBe('idle');
+    expect(state.sessionId).toBe('session-1');
+  });
+
+  describe('valid transitions', () => {
+    it('should transition idle -> initializing -> running', () => {
+      expect(machine.canTransition(state.status, 'initializing')).toBe(true);
+      state = machine.transition(state, 'initializing');
+      expect(state.status).toBe('initializing');
+
+      expect(machine.canTransition(state.status, 'running')).toBe(true);
+      state = machine.transition(state, 'running');
+      expect(state.status).toBe('running');
+    });
+
+    it('should handle pause/resume cycle', () => {
+      state = machine.transition(state, 'initializing');
+      state = machine.transition(state, 'running');
+
+      expect(machine.canTransition(state.status, 'paused')).toBe(true);
+      state = machine.transition(state, 'paused');
+      expect(state.status).toBe('paused');
+
+      expect(machine.canTransition(state.status, 'running')).toBe(true);
+      state = machine.transition(state, 'running');
+      expect(state.status).toBe('running');
+    });
+
+    it('should transition to stopped and back to idle', () => {
+      state = machine.transition(state, 'initializing');
+      state = machine.transition(state, 'running');
+      state = machine.transition(state, 'stopping');
+      expect(state.status).toBe('stopping');
+
+      state = machine.transition(state, 'stopped');
+      expect(state.status).toBe('stopped');
+      expect(machine.isTerminal(state.status)).toBe(true);
+
+      state = machine.transition(state, 'idle');
+      expect(state.status).toBe('idle');
     });
   });
 
-  describe('状态转换', () => {
-    it('should transition from idle to running on start', () => {
-      expect(stateMachine.canTransition('start')).toBe(true);
-      stateMachine.transition('start');
-      expect(stateMachine.getStatus()).toBe('running');
-    });
+  describe('invalid transitions', () => {
+    const expectInvalid = (from: RunStatus, to: RunStatus) => {
+      state = { ...state, status: from };
+      expect(machine.canTransition(from, to)).toBe(false);
+      expect(() => machine.transition(state, to)).toThrow(StateTransitionError);
+    };
 
-    it('should transition from running to paused on pause', () => {
-      stateMachine.transition('start');
-      expect(stateMachine.canTransition('pause')).toBe(true);
-      stateMachine.transition('pause');
-      expect(stateMachine.getStatus()).toBe('paused');
-    });
-
-    it('should transition from paused to running on resume', () => {
-      stateMachine.transition('start');
-      stateMachine.transition('pause');
-      expect(stateMachine.canTransition('resume')).toBe(true);
-      stateMachine.transition('resume');
-      expect(stateMachine.getStatus()).toBe('running');
-    });
-
-    it('should transition from running to stopped on stop', () => {
-      stateMachine.transition('start');
-      expect(stateMachine.canTransition('stop')).toBe(true);
-      stateMachine.transition('stop');
-      expect(stateMachine.getStatus()).toBe('stopped');
-    });
-
-    it('should transition from stopped to idle on reset', () => {
-      stateMachine.transition('start');
-      stateMachine.transition('stop');
-      expect(stateMachine.canTransition('reset')).toBe(true);
-      stateMachine.transition('reset');
-      expect(stateMachine.getStatus()).toBe('idle');
-    });
-  });
-
-  describe('非法状态转换', () => {
     it('should not allow pause from idle', () => {
-      expect(stateMachine.canTransition('pause')).toBe(false);
-      expect(() => stateMachine.transition('pause')).toThrow();
+      expectInvalid('idle', 'paused');
     });
 
-    it('should not allow resume from idle', () => {
-      expect(stateMachine.canTransition('resume')).toBe(false);
-      expect(() => stateMachine.transition('resume')).toThrow();
+    it('should not allow running -> idle directly', () => {
+      state = machine.transition(state, 'initializing');
+      state = machine.transition(state, 'running');
+      expectInvalid('running', 'idle');
     });
 
-    it('should not allow start from running', () => {
-      stateMachine.transition('start');
-      expect(stateMachine.canTransition('start')).toBe(false);
-      expect(() => stateMachine.transition('start')).toThrow();
-    });
-
-    it('should not allow reset from running', () => {
-      stateMachine.transition('start');
-      expect(stateMachine.canTransition('reset')).toBe(false);
-      expect(() => stateMachine.transition('reset')).toThrow();
+    it('should throw for unknown sequence', () => {
+      expect(() => machine.transition(state, 'completed')).toThrow(StateTransitionError);
     });
   });
 
-  describe('复杂状态流', () => {
-    it('should handle start -> pause -> resume -> stop -> reset', () => {
-      stateMachine.transition('start');
-      expect(stateMachine.getStatus()).toBe('running');
-
-      stateMachine.transition('pause');
-      expect(stateMachine.getStatus()).toBe('paused');
-
-      stateMachine.transition('resume');
-      expect(stateMachine.getStatus()).toBe('running');
-
-      stateMachine.transition('stop');
-      expect(stateMachine.getStatus()).toBe('stopped');
-
-      stateMachine.transition('reset');
-      expect(stateMachine.getStatus()).toBe('idle');
+  describe('helper methods', () => {
+    it('should report next states for running', () => {
+      const next = machine.getNextStates('running');
+      expect(next).toEqual(expect.arrayContaining(['paused', 'stopping']));
     });
 
-    it('should handle multiple pause/resume cycles', () => {
-      stateMachine.transition('start');
-
-      for (let i = 0; i < 3; i++) {
-        stateMachine.transition('pause');
-        expect(stateMachine.getStatus()).toBe('paused');
-
-        stateMachine.transition('resume');
-        expect(stateMachine.getStatus()).toBe('running');
-      }
-    });
-  });
-
-  describe('错误处理', () => {
-    it('should throw error for invalid action', () => {
-      expect(() => stateMachine.transition('invalid' as any)).toThrow();
+    it('should validate transition chain', () => {
+      expect(
+        machine.validateTransitionChain(['idle', 'initializing', 'running', 'stopping', 'stopped'])
+      ).toBe(true);
+      expect(machine.validateTransitionChain(['idle', 'running'])).toBe(false);
     });
 
-    it('should throw error for invalid transition', () => {
-      // Try to pause from idle
-      expect(() => stateMachine.transition('pause')).toThrow(
-        /Invalid transition/
-      );
+    it('should describe states', () => {
+      expect(machine.getStateDescription('running')).toContain('运行');
+    });
+
+    it('should evaluate processing capability', () => {
+      expect(machine.canAcceptEvents('running')).toBe(true);
+      expect(machine.canAcceptEvents('paused')).toBe(false);
+      expect(machine.canProcessEvents('stopping')).toBe(true);
     });
   });
 });
-

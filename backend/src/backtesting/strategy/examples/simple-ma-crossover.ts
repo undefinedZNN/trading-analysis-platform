@@ -44,9 +44,13 @@ export const parameters = defineParameters({
 // 策略生命周期实现
 const strategy: StrategyLifecycle = {
   onInit(ctx: StrategyContext): void {
+    const params = ctx.getParameters<{
+      shortPeriod: number;
+      longPeriod: number;
+    }>();
     ctx.log('info', 'MA Crossover Strategy initialized', {
-      shortPeriod: ctx.getParameter('shortPeriod'),
-      longPeriod: ctx.getParameter('longPeriod'),
+      shortPeriod: params.shortPeriod,
+      longPeriod: params.longPeriod,
     });
   },
 
@@ -125,4 +129,3 @@ const strategy: StrategyLifecycle = {
 };
 
 export default strategy;
-

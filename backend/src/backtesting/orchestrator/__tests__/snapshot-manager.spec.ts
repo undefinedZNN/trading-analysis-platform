@@ -10,6 +10,9 @@ import type { SessionSnapshot, SnapshotMeta } from '../interfaces/snapshot';
 import { SnapshotNotFoundError, SnapshotAlreadyExistsError } from '../interfaces/snapshot';
 import * as path from 'path';
 import * as os from 'os';
+
+const createTempDir = (prefix: string) =>
+  path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 import * as fs from 'fs/promises';
 
 describe('VersionManager', () => {
@@ -216,7 +219,7 @@ describe('SnapshotManager', () => {
   let testBaseDir: string;
   
   beforeEach(async () => {
-    testBaseDir = path.join(os.tmpdir(), `test-snapshots-${Date.now()}`);
+    testBaseDir = createTempDir('test-snapshots');
     
     serializer = new JsonSerializer();
     storage = new FileStorage(serializer, {
@@ -360,7 +363,7 @@ describe('SnapshotManager', () => {
       
       expect(snapshot.meta.sessionId).toBe('session-1');
       expect(snapshot.meta.checkpointId).toBe(checkpointId);
-      expect(snapshot.modules['test-module'].state.counter).toBe(42);
+      expect((snapshot.modules['test-module'].state as any).counter).toBe(42);
     });
     
     it('should throw error for non-existent snapshot', async () => {
@@ -567,4 +570,3 @@ describe('SnapshotManager', () => {
     });
   });
 });
-

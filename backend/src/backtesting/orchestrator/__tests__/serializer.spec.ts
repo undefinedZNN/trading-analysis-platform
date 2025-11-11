@@ -15,6 +15,9 @@ describe('JsonSerializer', () => {
       sessionId: 'test-session-123',
       checkpointId: 'checkpoint-001',
       createdAt: Date.now(),
+      status: 'active',
+      compressed: true,
+      sequenceId: 'seq-100',
       version: '1.0.0',
       tags: ['test'],
     },
@@ -30,8 +33,9 @@ describe('JsonSerializer', () => {
     },
     eventStoreCheckpoint: {
       lastSequenceId: 'seq-100',
-      lastTimestamp: Date.now(),
       processedCount: 100,
+      lastTimestamp: Date.now(),
+      busState: { status: 'running' },
     },
   });
   
@@ -355,4 +359,3 @@ describe('JsonSerializer', () => {
     });
   });
 });
-

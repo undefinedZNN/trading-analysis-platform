@@ -7,10 +7,58 @@
 import { createOrchestrator } from '../orchestrator/orchestrator';
 import { createModuleCoordinator } from '../orchestrator/module-coordinator';
 import type { BacktestSessionConfig } from '../interfaces/config';
+import type { StrategyManifest } from '../../strategy/interfaces';
 import { SessionState, SessionEventType } from '../interfaces/session';
 
 describe('Orchestrator Integration Tests', () => {
   let orchestrator: ReturnType<typeof createOrchestrator>;
+  const manifest: StrategyManifest = {
+    strategyId: 'integration-strategy',
+    name: 'Integration Strategy',
+    version: '1.0.0',
+    description: 'Strategy used in orchestrator integration tests',
+    author: 'integration-suite',
+    requiredTimeframe: '1h',
+    featureDeps: [],
+    dataDeps: [{ symbol: 'BTCUSDT' }],
+    defaultParameters: {},
+  };
+
+  const createConfig = (sessionId: string): BacktestSessionConfig => ({
+    sessionId,
+    data: {
+      source: {
+        provider: 'parquet-duckdb',
+        path: '/data',
+        symbols: ['BTCUSDT'],
+        timeRange: {
+          start: '2024-01-01T00:00:00Z',
+          end: '2024-01-31T00:00:00Z',
+        },
+        gapPolicy: 'drop',
+      },
+      timeframe: {
+        primary: '1h',
+      },
+    },
+    strategy: {
+      strategyId: 'integration-strategy',
+      name: 'Integration Strategy',
+      scriptContent: 'export default {};',
+      manifest,
+    },
+    execution: {
+      initialCapital: '10000',
+      matching: { marketFillPolicy: 'close' },
+      slippage: { model: 'zero' },
+      fee: { model: 'zero' },
+    },
+    risk: {
+      rules: [
+        { ruleId: 'max-positions', type: 'max-position', enabled: true, priority: 1, params: { maxPositions: 5 } },
+      ],
+    },
+  });
   
   beforeEach(() => {
     const moduleCoordinator = createModuleCoordinator();
@@ -27,48 +75,19 @@ describe('Orchestrator Integration Tests', () => {
   describe('端到端测试', () => {
     it('应该完成完整的回测会话生命周期', async () => {
       // 1. 创建会话
-      const config: BacktestSessionConfig = {
-        sessionId: 'e2e-test-session',
-        data: {
-          source: 'parquet',
-          basePath: '/data',
-          symbol: 'BTCUSDT',
-          startTime: '2024-01-01',
-          endTime: '2024-01-31',
-        },
-        strategy: {
-          strategyId: 'ma-crossover',
-          version: '1.0.0',
-          name: 'MA Crossover Strategy',
-          description: 'Simple moving average crossover strategy',
-          scriptPath: '/strategies/ma-crossover.js',
-        },
-        execution: {
-          initialCapital: 10000,
-          leverage: 1,
-          slippageModel: {
-            type: 'fixed',
-            value: 0.001,
-          },
-          feeModel: {
-            type: 'percentage',
-            makerFee: 0.001,
-            takerFee: 0.002,
-          },
-        },
-      };
+      const config = createConfig('e2e-test-session');
       
       const session = await orchestrator.createSession(config);
-      expect(session.getState()).toBe(SessionState.Idle);
+      expect(session.getStats().state).toBe(SessionState.Idle);
       
       // 2. 启动会话
       await orchestrator.start('e2e-test-session');
-      const runningState = session.getState();
+      const runningState = session.getStats().state;
       expect([SessionState.Initializing, SessionState.Running]).toContain(runningState);
       
       // 3. 暂停会话
       await orchestrator.pause('e2e-test-session');
-      expect(session.getState()).toBe(SessionState.Paused);
+      expect(session.getStats().state).toBe(SessionState.Paused);
       
       // 4. 创建快照
       const checkpointId = await orchestrator.createSnapshot(
@@ -79,12 +98,12 @@ describe('Orchestrator Integration Tests', () => {
       
       // 5. 恢复会话
       await orchestrator.resume('e2e-test-session');
-      expect(session.getState()).toBe(SessionState.Running);
+      expect(session.getStats().state).toBe(SessionState.Running);
       
       // 6. 停止会话
       await orchestrator.stop('e2e-test-session');
-      const stoppedState = session.getState();
-      expect([SessionState.Stopping, SessionState.Stopped]).toContain(stoppedState);
+      const stoppedState = session.getStats().state;
+      expect([SessionState.Stopped, SessionState.Destroyed]).toContain(stoppedState);
       
       // 7. 获取结果
       const results = await orchestrator.getResults('e2e-test-session');
@@ -103,42 +122,11 @@ describe('Orchestrator Integration Tests', () => {
    */
   describe('多会话管理', () => {
     it('应该正确管理多个并发会话', async () => {
-      const baseConfig: BacktestSessionConfig = {
-        sessionId: 'session-1',
-        data: {
-          source: 'parquet',
-          basePath: '/data',
-          symbol: 'BTCUSDT',
-          startTime: '2024-01-01',
-          endTime: '2024-01-31',
-        },
-        strategy: {
-          strategyId: 'test-strategy',
-          version: '1.0.0',
-          name: 'Test Strategy',
-          description: 'Test strategy',
-          scriptPath: '/path/to/strategy.js',
-        },
-        execution: {
-          initialCapital: 10000,
-          leverage: 1,
-          slippageModel: { type: 'fixed', value: 0.001 },
-          feeModel: {
-            type: 'percentage',
-            makerFee: 0.001,
-            takerFee: 0.002,
-          },
-        },
-      };
-      
       // 创建多个会话
       const sessionIds = ['session-1', 'session-2', 'session-3'];
       
       for (const sessionId of sessionIds) {
-        await orchestrator.createSession({
-          ...baseConfig,
-          sessionId,
-        });
+        await orchestrator.createSession(createConfig(sessionId));
       }
       
       // 验证所有会话都已创建
@@ -155,7 +143,7 @@ describe('Orchestrator Integration Tests', () => {
         const session = orchestrator.getSession(sessionId);
         expect(session).toBeDefined();
         expect([SessionState.Initializing, SessionState.Running]).toContain(
-          session!.getState()
+          session!.getStats().state
         );
       }
       
@@ -170,33 +158,7 @@ describe('Orchestrator Integration Tests', () => {
    */
   describe('快照和恢复', () => {
     it('应该正确创建和恢复快照', async () => {
-      const config: BacktestSessionConfig = {
-        sessionId: 'snapshot-test',
-        data: {
-          source: 'parquet',
-          basePath: '/data',
-          symbol: 'BTCUSDT',
-          startTime: '2024-01-01',
-          endTime: '2024-01-31',
-        },
-        strategy: {
-          strategyId: 'test-strategy',
-          version: '1.0.0',
-          name: 'Test Strategy',
-          description: 'Test strategy',
-          scriptPath: '/path/to/strategy.js',
-        },
-        execution: {
-          initialCapital: 10000,
-          leverage: 1,
-          slippageModel: { type: 'fixed', value: 0.001 },
-          feeModel: {
-            type: 'percentage',
-            makerFee: 0.001,
-            takerFee: 0.002,
-          },
-        },
-      };
+      const config = createConfig('snapshot-test');
       
       await orchestrator.createSession(config);
       await orchestrator.start('snapshot-test');
@@ -493,4 +455,3 @@ describe('Orchestrator Integration Tests', () => {
     }, 10000); // 增加超时时间
   });
 });
-

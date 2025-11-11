@@ -146,7 +146,9 @@ export type ControlEventType =
   | 'PAUSE'         // 暂停
   | 'RESUME'        // 恢复
   | 'STOP'          // 停止
+  | 'RESET'         // 重置
   | 'SNAPSHOT'      // 快照
+  | 'CHECKPOINT'    // 检查点
   | 'SEEK';         // 跳转
 
 /**
@@ -166,7 +168,13 @@ export interface ControlEvent {
     
     /** 目标时间戳（SEEK时使用） */
     timestamp?: string;
+
+    /** 检查点ID */
+    checkpointId?: string;
     
+    /** 目标事件ID（兼容旧实现） */
+    eventId?: number;
+
     /** 原因说明 */
     reason?: string;
     
@@ -550,4 +558,3 @@ export interface EventFilter {
   /** 自定义谓词 */
   predicate?: (event: BaseEvent) => boolean;
 }
-

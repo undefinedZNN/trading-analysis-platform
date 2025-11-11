@@ -9,8 +9,84 @@ import {
   createModuleCoordinator,
   type BacktestSessionConfig,
   SessionEventType,
-  SessionState,
+  type StateChangedEventData,
+  type ProgressUpdatedEventData,
 } from '../index';
+
+type TimeRange = BacktestSessionConfig['data']['source']['timeRange'];
+
+const DEMO_SYMBOL = 'BTCUSDT';
+const DEFAULT_RANGE: TimeRange = {
+  start: '2024-01-01T00:00:00Z',
+  end: '2024-01-31T23:59:59Z',
+};
+
+function buildDataConfig(range: TimeRange = DEFAULT_RANGE): BacktestSessionConfig['data'] {
+  return {
+    source: {
+      provider: 'parquet-duckdb',
+      path: '/data/crypto',
+      symbols: [DEMO_SYMBOL],
+      timeRange: range,
+      gapPolicy: 'forward-fill',
+    },
+    timeframe: {
+      primary: '1h',
+    },
+  };
+}
+
+function buildStrategyConfig(id: string, name: string): BacktestSessionConfig['strategy'] {
+  return {
+    strategyId: id,
+    name,
+    scriptContent: '// demo strategy script',
+    manifest: {
+      strategyId: id,
+      name,
+      version: '1.0.0',
+      description: `${name} strategy`,
+      author: 'Demo User',
+      requiredTimeframe: '1h',
+      featureDeps: [],
+      dataDeps: [{ symbol: DEMO_SYMBOL }],
+      defaultParameters: { fast: 10, slow: 30 },
+    },
+    parameters: { fast: 10, slow: 30 },
+  };
+}
+
+function buildExecutionConfig(initialCapital = '10000'): BacktestSessionConfig['execution'] {
+  return {
+    initialCapital,
+    matching: {
+      marketFillPolicy: 'mid',
+      limitFillPolicy: 'limit-price',
+    },
+    slippage: {
+      model: 'fixed-spread',
+      params: { spread: 0.0005 },
+    },
+    fee: {
+      model: 'fixed-rate',
+      params: { maker: 0.001, taker: 0.002 },
+    },
+  };
+}
+
+function buildRiskConfig(): BacktestSessionConfig['risk'] {
+  return {
+    rules: [
+      {
+        ruleId: 'max-drawdown',
+        type: 'max-drawdown',
+        enabled: true,
+        priority: 1,
+        params: { threshold: 0.2 },
+      },
+    ],
+  };
+}
 
 /**
  * 示例1: 多会话并行运行
@@ -33,30 +109,10 @@ async function example1_MultipleSessions() {
     for (const strategy of strategies) {
       const config: BacktestSessionConfig = {
         sessionId: `session-${strategy.id}`,
-        data: {
-          source: 'parquet',
-          basePath: '/data/crypto',
-          symbol: 'BTCUSDT',
-          startTime: '2024-01-01',
-          endTime: '2024-01-31',
-        },
-        strategy: {
-          strategyId: strategy.id,
-          version: '1.0.0',
-          name: strategy.name,
-          description: `${strategy.name} strategy`,
-          scriptPath: `./strategies/${strategy.id}.js`,
-        },
-        execution: {
-          initialCapital: 10000,
-          leverage: 1,
-          slippageModel: { type: 'fixed', value: 0.001 },
-          feeModel: {
-            type: 'percentage',
-            makerFee: 0.001,
-            takerFee: 0.002,
-          },
-        },
+        data: buildDataConfig(),
+        strategy: buildStrategyConfig(strategy.id, strategy.name),
+        execution: buildExecutionConfig(),
+        risk: buildRiskConfig(),
       };
       
       await orchestrator.createSession(config);
@@ -77,7 +133,7 @@ async function example1_MultipleSessions() {
     console.log('\n📊 会话状态:');
     for (const strategy of strategies) {
       const session = orchestrator.getSession(`session-${strategy.id}`);
-      console.log(`  - ${strategy.name}: ${session?.getState()}`);
+      console.log(`  - ${strategy.name}: ${session?.state ?? 'unknown'}`);
     }
     
     // 清理
@@ -99,30 +155,13 @@ async function example2_SnapshotManagement() {
   
   const config: BacktestSessionConfig = {
     sessionId: 'snapshot-demo',
-    data: {
-      source: 'parquet',
-      basePath: '/data/crypto',
-      symbol: 'BTCUSDT',
-      startTime: '2024-01-01',
-      endTime: '2024-12-31',
-    },
-    strategy: {
-      strategyId: 'test-strategy',
-      version: '1.0.0',
-      name: 'Test Strategy',
-      description: 'Test strategy for snapshot demo',
-      scriptPath: './strategies/test.js',
-    },
-    execution: {
-      initialCapital: 10000,
-      leverage: 1,
-      slippageModel: { type: 'fixed', value: 0.001 },
-      feeModel: {
-        type: 'percentage',
-        makerFee: 0.001,
-        takerFee: 0.002,
-      },
-    },
+    data: buildDataConfig({
+      start: '2024-01-01T00:00:00Z',
+      end: '2024-12-31T23:59:59Z',
+    }),
+    strategy: buildStrategyConfig('test-strategy', 'Test Strategy'),
+    execution: buildExecutionConfig(),
+    risk: buildRiskConfig(),
   };
   
   try {
@@ -178,30 +217,10 @@ async function example3_EventHandling() {
   
   const config: BacktestSessionConfig = {
     sessionId: 'event-demo',
-    data: {
-      source: 'parquet',
-      basePath: '/data/crypto',
-      symbol: 'BTCUSDT',
-      startTime: '2024-01-01',
-      endTime: '2024-01-31',
-    },
-    strategy: {
-      strategyId: 'test-strategy',
-      version: '1.0.0',
-      name: 'Test Strategy',
-      description: 'Test strategy for event demo',
-      scriptPath: './strategies/test.js',
-    },
-    execution: {
-      initialCapital: 10000,
-      leverage: 1,
-      slippageModel: { type: 'fixed', value: 0.001 },
-      feeModel: {
-        type: 'percentage',
-        makerFee: 0.001,
-        takerFee: 0.002,
-      },
-    },
+    data: buildDataConfig(),
+    strategy: buildStrategyConfig('test-strategy', 'Test Strategy'),
+    execution: buildExecutionConfig(),
+    risk: buildRiskConfig(),
   };
   
   try {
@@ -211,7 +230,10 @@ async function example3_EventHandling() {
     console.log('设置事件监听器...');
     
     session.on(SessionEventType.StateChanged, (event) => {
-      console.log(`  📊 状态变化: ${event.oldState} -> ${event.newState}`);
+      const data = event.data as StateChangedEventData | undefined;
+      console.log(
+        `  📊 状态变化: ${data?.previousState ?? 'unknown'} -> ${data?.currentState ?? session.state}`
+      );
     });
     
     session.on(SessionEventType.Started, () => {
@@ -230,12 +252,14 @@ async function example3_EventHandling() {
       console.log('  🛑 会话已停止');
     });
     
-    session.on(SessionEventType.Error, (event) => {
-      console.error(`  ❌ 错误: ${event.error}`);
+    session.on(SessionEventType.Failed, (event) => {
+      console.error(`  ❌ 错误: ${JSON.stringify(event.data)}`);
     });
     
-    session.on(SessionEventType.Progress, (event) => {
-      console.log(`  📈 进度: ${event.progress}%`);
+    session.on(SessionEventType.ProgressUpdated, (event) => {
+      const data = event.data as ProgressUpdatedEventData | undefined;
+      const percent = ((data?.progress ?? 0) * 100).toFixed(2);
+      console.log(`  📈 进度: ${percent}%`);
     });
     
     // 执行生命周期操作
@@ -271,30 +295,10 @@ async function example4_ErrorHandling() {
   
   const config: BacktestSessionConfig = {
     sessionId: 'error-demo',
-    data: {
-      source: 'parquet',
-      basePath: '/data/crypto',
-      symbol: 'BTCUSDT',
-      startTime: '2024-01-01',
-      endTime: '2024-01-31',
-    },
-    strategy: {
-      strategyId: 'test-strategy',
-      version: '1.0.0',
-      name: 'Test Strategy',
-      description: 'Test strategy',
-      scriptPath: './strategies/test.js',
-    },
-    execution: {
-      initialCapital: 10000,
-      leverage: 1,
-      slippageModel: { type: 'fixed', value: 0.001 },
-      feeModel: {
-        type: 'percentage',
-        makerFee: 0.001,
-        takerFee: 0.002,
-      },
-    },
+    data: buildDataConfig(),
+    strategy: buildStrategyConfig('test-strategy', 'Test Strategy'),
+    execution: buildExecutionConfig(),
+    risk: buildRiskConfig(),
   };
   
   try {
@@ -375,4 +379,3 @@ export {
   example3_EventHandling,
   example4_ErrorHandling,
 };
-

@@ -12,13 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type {
-  EventStore as IEventStore,
-  BaseEvent,
-  RecordedEvent,
-  CheckpointSnapshot,
-  CheckpointMeta,
-} from './interfaces';
+import type { BaseEvent } from './interfaces';
 
 /**
  * EventStore 配置选项
@@ -57,24 +51,40 @@ export interface EventStoreConfig {
  * - 内存：环形缓冲区，快速访问
  * - 文件：Parquet 格式，持久化存储
  */
-export class EventStore implements IEventStore {
+export interface StoredCheckpointMeta {
+  checkpointId: string;
+  timestamp: number;
+  eventId: number;
+}
+
+export interface StoredCheckpointSnapshot extends StoredCheckpointMeta {
+  eventCount: number;
+  state: Record<string, unknown>;
+}
+
+export type StoredEvent = BaseEvent & {
+  storageId: number;
+  recordedAt: number;
+};
+
+export class EventStore {
   private readonly config: Required<EventStoreConfig>;
 
   // === 内存缓冲区 ===
-  private memoryBuffer: RecordedEvent[];
+  private memoryBuffer: StoredEvent[];
   private bufferHead: number; // 环形缓冲区头指针
   private eventIdCounter: number;
 
   // === 检查点 ===
-  private checkpoints: Map<string, CheckpointSnapshot>;
+  private checkpoints: Map<string, StoredCheckpointSnapshot>;
 
   // === 持久化 ===
-  private pendingFlush: RecordedEvent[];
+  private pendingFlush: StoredEvent[];
   private flushTimer: NodeJS.Timeout | null;
 
   // === 元数据 ===
-  private firstEventTime: number | null;
-  private lastEventTime: number | null;
+  private firstEventTime: string | null;
+  private lastEventTime: string | null;
 
   constructor(config: EventStoreConfig = {}) {
     this.config = {
@@ -146,9 +156,9 @@ export class EventStore implements IEventStore {
    * 追加事件
    */
   append(event: BaseEvent): void {
-    const recordedEvent: RecordedEvent = {
+    const recordedEvent: StoredEvent = {
       ...event,
-      eventId: this.eventIdCounter++,
+      storageId: this.eventIdCounter++,
       recordedAt: Date.now(),
     };
 
@@ -212,10 +222,10 @@ export class EventStore implements IEventStore {
   /**
    * 获取指定范围的事件
    */
-  getRange(startId: number, endId: number): RecordedEvent[] {
+  getRange(startId: number, endId: number): StoredEvent[] {
     // 从内存缓冲区查询
     const result = this.memoryBuffer.filter(
-      (event) => event.eventId >= startId && event.eventId <= endId
+      (event) => event.storageId >= startId && event.storageId <= endId
     );
 
     // TODO: 如果内存中没有，从持久化文件中加载
@@ -226,25 +236,25 @@ export class EventStore implements IEventStore {
   /**
    * 获取从指定 ID 开始的所有事件
    */
-  getFrom(startId: number): RecordedEvent[] {
-    return this.memoryBuffer.filter((event) => event.eventId >= startId);
+  getFrom(startId: number): StoredEvent[] {
+    return this.memoryBuffer.filter((event) => event.storageId >= startId);
   }
 
   /**
    * 获取所有事件
    */
-  getAll(): RecordedEvent[] {
+  getAll(): StoredEvent[] {
     return [...this.memoryBuffer];
   }
 
   /**
    * 创建检查点
    */
-  checkpoint(id: string): CheckpointMeta {
-    const snapshot: CheckpointSnapshot = {
+  checkpoint(id: string): StoredCheckpointMeta {
+    const snapshot: StoredCheckpointSnapshot = {
       checkpointId: id,
       timestamp: Date.now(),
-      eventId: this.eventIdCounter - 1, // 最后一个事件的 ID
+      eventId: Math.max(this.eventIdCounter - 1, 0), // 最后一个事件的 ID
       eventCount: this.memoryBuffer.length,
       state: {}, // TODO: 添加状态快照
     };
@@ -266,7 +276,7 @@ export class EventStore implements IEventStore {
   /**
    * 保存检查点到文件
    */
-  private saveCheckpoint(snapshot: CheckpointSnapshot): void {
+  private saveCheckpoint(snapshot: StoredCheckpointSnapshot): void {
     try {
       const filename = `checkpoint_${snapshot.checkpointId}.json`;
       const filepath = path.join(this.config.storageDir, filename);
@@ -283,7 +293,7 @@ export class EventStore implements IEventStore {
   /**
    * 恢复到检查点
    */
-  restore(checkpointId: string): CheckpointSnapshot {
+  restore(checkpointId: string): StoredCheckpointSnapshot {
     // 从内存查找
     let snapshot = this.checkpoints.get(checkpointId);
 
@@ -304,7 +314,7 @@ export class EventStore implements IEventStore {
   /**
    * 从文件加载检查点
    */
-  private loadCheckpoint(checkpointId: string): CheckpointSnapshot | null {
+  private loadCheckpoint(checkpointId: string): StoredCheckpointSnapshot | null {
     try {
       const filename = `checkpoint_${checkpointId}.json`;
       const filepath = path.join(this.config.storageDir, filename);
@@ -314,7 +324,7 @@ export class EventStore implements IEventStore {
       }
 
       const data = fs.readFileSync(filepath, 'utf-8');
-      const snapshot = JSON.parse(data) as CheckpointSnapshot;
+      const snapshot = JSON.parse(data) as StoredCheckpointSnapshot;
 
       // 缓存到内存
       this.checkpoints.set(checkpointId, snapshot);
@@ -329,7 +339,7 @@ export class EventStore implements IEventStore {
   /**
    * 获取所有检查点元数据
    */
-  listCheckpoints(): CheckpointMeta[] {
+  listCheckpoints(): StoredCheckpointMeta[] {
     return Array.from(this.checkpoints.values()).map((snapshot) => ({
       checkpointId: snapshot.checkpointId,
       timestamp: snapshot.timestamp,
@@ -382,4 +392,3 @@ export class EventStore implements IEventStore {
     console.log('[EventStore] Destroyed');
   }
 }
-

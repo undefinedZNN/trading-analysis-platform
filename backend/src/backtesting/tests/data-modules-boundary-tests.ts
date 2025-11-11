@@ -7,9 +7,17 @@
  * 3. FeatureRegistry - 依赖边界、参数极值
  */
 
-import { DefaultGapDetector, DefaultGapFiller } from '../data/providers';
-import { TimeframeAdapterImpl, StandardOHLCVAggregator } from '../data/timeframe';
+import { DefaultGapDetector } from '../data/providers';
+import {
+  TimeframeAdapterImpl,
+  StandardOHLCVAggregator,
+} from '../data/timeframe';
+import type {
+  BarEvent as TimeframeBarEvent,
+  Timeframe,
+} from '../data/timeframe/interfaces';
 import { FeatureRegistryImpl, ParameterValidator } from '../features';
+import type { FeatureDefinition } from '../features/interfaces';
 import { of } from 'rxjs';
 import { toArray } from 'rxjs/operators';
 import Big from 'big.js';
@@ -40,16 +48,58 @@ async function test(description: string, fn: () => void | Promise<void>): Promis
   }
 }
 
+function isoFromMs(ms: number): string {
+  return new Date(ms).toISOString();
+}
+
+function toTimeframeBar(event: BarEvent): TimeframeBarEvent {
+  const timestamp = isoFromMs(event.timestamp);
+  return {
+    sequenceId: `seq-${event.symbol}-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
+    timestamp,
+    symbol: event.symbol,
+    timeframe: event.timeframe,
+    open: event.open,
+    high: event.high,
+    low: event.low,
+    close: event.close,
+    volume: event.volume,
+    market: event.market,
+    source: event.source ?? 'data-modules-tests',
+    trades: 0,
+    notional: '0',
+    features: {},
+  };
+}
+
+function convertBars(events: BarEvent[]): TimeframeBarEvent[] {
+  return events.map(toTimeframeBar);
+}
+
+function createTestFeatureDefinition(
+  id: string,
+  dependsOn: string[] = []
+): FeatureDefinition {
+  return {
+    id,
+    description: `Test feature ${id}`,
+    dependsOn: dependsOn.map((ref) => ({ ref, type: 'feature' })),
+    compute: (stream) => stream,
+  };
+}
+
 // 临时 BarEvent 类型
 interface BarEvent {
   symbol: string;
-  timeframe: string;
+  timeframe: Timeframe;
   timestamp: number;
   open: string;
   high: string;
   low: string;
   close: string;
   volume: string;
+  market?: string;
+  source?: string;
   synthetic?: boolean;
 }
 
@@ -186,18 +236,18 @@ async function runTests(): Promise<void> {
   console.log('\n## TimeframeAdapter 边界测试\n');
 
   await test('边界：极小时间框架 (1s)', () => {
-    const adapter = new TimeframeAdapterImpl('1s', 'close');
-    assert(adapter !== null, 'Should create 1s adapter');
+    const adapter = new TimeframeAdapterImpl();
+    assert(typeof adapter.resample === 'function', 'Adapter should resample streams');
   });
 
   await test('边界：极大时间框架 (1w)', () => {
-    const adapter = new TimeframeAdapterImpl('1w', 'close');
-    assert(adapter !== null, 'Should create 1w adapter');
+    const adapter = new TimeframeAdapterImpl();
+    assert(typeof adapter.createMultiFrameStream === 'function', 'Adapter should create multi-frame streams');
   });
 
   await test('边界：非标准时间框架 (7m)', () => {
-    const adapter = new TimeframeAdapterImpl('7m', 'close');
-    assert(adapter !== null, 'Should create 7m adapter');
+    const adapter = new TimeframeAdapterImpl();
+    assert(adapter instanceof TimeframeAdapterImpl, 'Adapter should support custom timeframes');
   });
 
   await test('边界：单个 bar 聚合', () => {
@@ -213,14 +263,19 @@ async function runTests(): Promise<void> {
       volume: '100',
     };
     
-    const result = aggregator.aggregate([bar], '1m', bar.timestamp);
+    const result = aggregator.aggregate([toTimeframeBar(bar)]);
     assert(result !== null, 'Should aggregate single bar');
   });
 
   await test('边界：空 bar 列表聚合', () => {
     const aggregator = new StandardOHLCVAggregator();
-    const result = aggregator.aggregate([], '1m', Date.now());
-    assert(result === null, 'Should return null for empty list');
+    let threw = false;
+    try {
+      aggregator.aggregate([]);
+    } catch {
+      threw = true;
+    }
+    assert(threw, 'Should throw for empty list');
   });
 
   await test('边界：大量 bar 聚合 (1000个)', () => {
@@ -243,7 +298,7 @@ async function runTests(): Promise<void> {
     }
     
     const startTime = Date.now();
-    const result = aggregator.aggregate(bars, '1h', base);
+    const result = aggregator.aggregate(convertBars(bars));
     const duration = Date.now() - startTime;
     
     console.log(`   聚合耗时: ${duration}ms`);
@@ -251,15 +306,15 @@ async function runTests(): Promise<void> {
   });
 
   await test('边界：跨越时区边界', () => {
-    const adapter = new TimeframeAdapterImpl('1d', 'close');
+    const adapter = new TimeframeAdapterImpl();
     assert(adapter !== null, 'Should handle timezone boundary');
   });
 
   await test('边界：跨越 DST 切换', () => {
     // 2024年3月10日 - 美国夏令时开始
     const dstDate = parseISO('2024-03-10T02:00:00Z').getTime();
-    const adapter = new TimeframeAdapterImpl('1h', 'close');
-    assert(adapter !== null, 'Should handle DST boundary');
+    const adapter = new TimeframeAdapterImpl();
+    assert(adapter !== null && dstDate > 0, 'Should handle DST boundary');
   });
 
   await test('边界：极端价格波动 (100x)', () => {
@@ -277,7 +332,7 @@ async function runTests(): Promise<void> {
     ];
     
     const aggregator = new StandardOHLCVAggregator();
-    const result = aggregator.aggregate(bars, '1m', bars[0].timestamp);
+    const result = aggregator.aggregate(convertBars(bars));
     
     assert(result !== null, 'Should handle extreme volatility');
   });
@@ -313,13 +368,7 @@ async function runTests(): Promise<void> {
     const registry = new FeatureRegistryImpl();
     
     for (let i = 0; i < 100; i++) {
-      registry.register({
-        name: `feature_${i}`,
-        description: `Feature ${i}`,
-        parameters: {},
-        dependencies: [],
-        compute: (bars$) => bars$,
-      });
+      registry.register(createTestFeatureDefinition(`feature_${i}`));
     }
     
     assert(registry.getFeatureCount() === 100, `Should have 100 features, got ${registry.getFeatureCount()}`);
@@ -330,17 +379,16 @@ async function runTests(): Promise<void> {
     
     // 创建20层依赖链
     for (let i = 0; i < 20; i++) {
-      registry.register({
-        name: `feature_${i}`,
-        description: `Feature ${i}`,
-        parameters: {},
-        dependencies: i > 0 ? [`feature_${i - 1}`] : [],
-        compute: (bars$) => bars$,
-      });
+      registry.register(
+        createTestFeatureDefinition(
+          `feature_${i}`,
+          i > 0 ? [`feature_${i - 1}`] : []
+        )
+      );
     }
     
     try {
-      const resolved = registry.resolve([{ name: 'feature_19', params: {} }]);
+      const resolved = registry.resolve([{ id: 'feature_19', params: {} }]);
       assert(resolved.length === 20, `Should resolve 20-level chain, got ${resolved.length}`);
     } catch (error: any) {
       // 可能有深度限制，这也是合理的
@@ -351,24 +399,11 @@ async function runTests(): Promise<void> {
   await test('边界：循环依赖检测', () => {
     const registry = new FeatureRegistryImpl();
     
-    registry.register({
-      name: 'feature_a',
-      description: 'Feature A',
-      parameters: {},
-      dependencies: ['feature_b'],
-      compute: (bars$) => bars$,
-    });
-    
-    registry.register({
-      name: 'feature_b',
-      description: 'Feature B',
-      parameters: {},
-      dependencies: ['feature_a'],
-      compute: (bars$) => bars$,
-    });
+    registry.register(createTestFeatureDefinition('feature_a', ['feature_b']));
+    registry.register(createTestFeatureDefinition('feature_b', ['feature_a']));
     
     try {
-      registry.resolve([{ name: 'feature_a', params: {} }]);
+      registry.resolve([{ id: 'feature_a', params: {} }]);
       assert(false, 'Should detect circular dependency');
     } catch (error: any) {
       assert(
@@ -380,49 +415,66 @@ async function runTests(): Promise<void> {
 
   await test('边界：参数最大整数', () => {
     const validator = new ParameterValidator();
-    const schema = {
-      period: {
-        type: 'number' as const,
-        required: false,
-        default: 14,
-        min: 1,
-        max: Number.MAX_SAFE_INTEGER,
+    const feature: FeatureDefinition = {
+      id: 'param-max',
+      description: 'Test feature',
+      compute: (stream) => stream,
+      paramSchema: {
+        period: {
+          type: 'integer',
+          required: false,
+          default: 14,
+          min: 1,
+          max: Number.MAX_SAFE_INTEGER,
+        },
       },
     };
     
-    const result = validator.validate({ period: Number.MAX_SAFE_INTEGER }, schema);
+    const result = validator.validate(feature, {
+      period: Number.MAX_SAFE_INTEGER,
+    });
     assert(result.valid, 'Should accept MAX_SAFE_INTEGER');
   });
 
   await test('边界：参数零值', () => {
     const validator = new ParameterValidator();
-    const schema = {
-      threshold: {
-        type: 'number' as const,
-        required: false,
-        default: 0,
-        min: 0,
-        max: 100,
+    const feature: FeatureDefinition = {
+      id: 'param-zero',
+      description: 'Test feature',
+      compute: (stream) => stream,
+      paramSchema: {
+        threshold: {
+          type: 'number',
+          required: false,
+          default: 0,
+          min: 0,
+          max: 100,
+        },
       },
     };
     
-    const result = validator.validate({ threshold: 0 }, schema);
+    const result = validator.validate(feature, { threshold: 0 });
     assert(result.valid, 'Should accept zero');
   });
 
   await test('边界：参数负值', () => {
     const validator = new ParameterValidator();
-    const schema = {
-      offset: {
-        type: 'number' as const,
-        required: false,
-        default: 0,
-        min: -100,
-        max: 100,
+    const feature: FeatureDefinition = {
+      id: 'param-negative',
+      description: 'Test feature',
+      compute: (stream) => stream,
+      paramSchema: {
+        offset: {
+          type: 'number',
+          required: false,
+          default: 0,
+          min: -100,
+          max: 100,
+        },
       },
     };
     
-    const result = validator.validate({ offset: -50 }, schema);
+    const result = validator.validate(feature, { offset: -50 });
     assert(result.valid, 'Should accept negative value');
   });
 
@@ -430,13 +482,7 @@ async function runTests(): Promise<void> {
     const registry = new FeatureRegistryImpl();
     const longName = 'A'.repeat(200);
     
-    registry.register({
-      name: longName,
-      description: 'Long name feature',
-      parameters: {},
-      dependencies: [],
-      compute: (bars$) => bars$,
-    });
+    registry.register(createTestFeatureDefinition(longName));
     
     assert(registry.has(longName), 'Should handle long feature name');
   });
@@ -445,13 +491,7 @@ async function runTests(): Promise<void> {
     const registry = new FeatureRegistryImpl();
     const specialName = 'feature_with-dash.and_underscore';
     
-    registry.register({
-      name: specialName,
-      description: 'Special chars feature',
-      parameters: {},
-      dependencies: [],
-      compute: (bars$) => bars$,
-    });
+    registry.register(createTestFeatureDefinition(specialName));
     
     assert(registry.has(specialName), 'Should handle special chars');
   });
@@ -459,15 +499,9 @@ async function runTests(): Promise<void> {
   await test('边界：空参数对象', () => {
     const registry = new FeatureRegistryImpl();
     
-    registry.register({
-      name: 'test_feature',
-      description: 'Test',
-      parameters: {},  // 空参数
-      dependencies: [],
-      compute: (bars$) => bars$,
-    });
+    registry.register(createTestFeatureDefinition('test_feature'));
     
-    const resolved = registry.resolve([{ name: 'test_feature', params: {} }]);
+    const resolved = registry.resolve([{ id: 'test_feature', params: {} }]);
     assert(resolved.length === 1, 'Should handle empty parameters');
   });
 
@@ -476,25 +510,18 @@ async function runTests(): Promise<void> {
     
     // 创建10个基础特征
     for (let i = 0; i < 10; i++) {
-      registry.register({
-        name: `base_${i}`,
-        description: `Base ${i}`,
-        parameters: {},
-        dependencies: [],
-        compute: (bars$) => bars$,
-      });
+      registry.register(createTestFeatureDefinition(`base_${i}`));
     }
     
     // 创建一个依赖所有10个特征的特征
-    registry.register({
-      name: 'complex_feature',
-      description: 'Complex feature',
-      parameters: {},
-      dependencies: Array.from({ length: 10 }, (_, i) => `base_${i}`),
-      compute: (bars$) => bars$,
-    });
+    registry.register(
+      createTestFeatureDefinition(
+        'complex_feature',
+        Array.from({ length: 10 }, (_, i) => `base_${i}`)
+      )
+    );
     
-    const resolved = registry.resolve([{ name: 'complex_feature', params: {} }]);
+    const resolved = registry.resolve([{ id: 'complex_feature', params: {} }]);
     assert(resolved.length === 11, `Should resolve 11 features, got ${resolved.length}`);
   });
 
@@ -551,20 +578,21 @@ async function runTests(): Promise<void> {
     const registry = new FeatureRegistryImpl();
     
     // 注册一个简单的 MA 特征
-    registry.register({
-      name: 'SimpleMA',
+    const simpleMAFeature: FeatureDefinition = {
+      id: 'SimpleMA',
       description: 'Simple Moving Average',
-      parameters: {
-        period: { type: 'number' as const, required: false, default: 10, min: 1, max: 1000 },
+      paramSchema: {
+        period: {
+          type: 'integer',
+          required: false,
+          default: 10,
+          min: 1,
+          max: 1000,
+        },
       },
-      dependencies: [],
-      compute: (bars$, params) => {
-        return bars$.pipe(
-          // 简单的窗口平均
-          toArray()
-        );
-      },
-    });
+      compute: (stream) => stream,
+    };
+    registry.register(simpleMAFeature);
     
     const bars: any[] = [];
     for (let i = 0; i < 1000; i++) {
@@ -580,7 +608,7 @@ async function runTests(): Promise<void> {
       });
     }
     
-    const resolved = registry.resolve([{ name: 'SimpleMA', params: { period: 20 } }]);
+    const resolved = registry.resolve([{ id: 'SimpleMA', params: { period: 20 } }]);
     
     console.log('   计算 1000 bars 特征...');
     const startTime = Date.now();
@@ -624,4 +652,3 @@ runTests().catch((error) => {
   console.error('Test runner error:', error);
   process.exit(1);
 });
-

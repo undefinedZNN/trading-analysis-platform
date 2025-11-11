@@ -43,6 +43,9 @@ export interface SnapshotMeta {
   
   /** 其他元数据 */
   metadata?: Record<string, unknown>;
+
+  /** 标签集合 */
+  tags?: string[];
 }
 
 // ============================================================================
@@ -133,6 +136,9 @@ export interface EventStoreCheckpoint {
   /** 已处理事件数 */
   processedCount: number;
   
+  /** 最后处理的事件时间戳 */
+  lastTimestamp?: number;
+  
   /** 总线状态 */
   busState?: Record<string, unknown>;
   
@@ -149,27 +155,33 @@ export interface EventStoreCheckpoint {
  * 
  * 包含所有模块的快照数据
  */
+export interface ModuleSnapshot {
+  /** 模块状态数据 */
+  state: unknown;
+  /** 状态捕获时间 */
+  timestamp?: number;
+  /** 额外元数据 */
+  metadata?: Record<string, unknown>;
+}
+
 export interface SessionSnapshot {
   /** 元数据 */
   meta: SnapshotMeta;
   
-  /** 模块快照 */
-  modules: {
-    /** 策略快照 */
-    strategy?: StrategySnapshot;
-    
-    /** 执行快照 */
-    execution?: ExecutionSnapshot;
-    
-    /** 风控快照 */
-    risk?: RiskSnapshot;
-    
-    /** 数据快照 */
-    data?: DataSnapshot;
-  };
+  /** 模块快照（按模块名称索引） */
+  modules: Record<string, ModuleSnapshot>;
   
   /** 事件存储检查点 */
   eventStoreCheckpoint: EventStoreCheckpoint;
+}
+
+/**
+ * 快照列表查询选项
+ */
+export interface SnapshotListOptions {
+  limit?: number;
+  sortBy?: 'createdAt' | 'checkpointId';
+  sortOrder?: 'asc' | 'desc';
 }
 
 // ============================================================================
@@ -212,7 +224,7 @@ export interface SnapshotStorage {
    * @param sessionId 会话ID
    * @returns 快照元数据列表
    */
-  list(sessionId: string): Promise<SnapshotMeta[]>;
+  list(sessionId: string, options?: SnapshotListOptions): Promise<SnapshotMeta[]>;
   
   /**
    * 检查快照是否存在
@@ -222,6 +234,21 @@ export interface SnapshotStorage {
    * @returns 是否存在
    */
   exists(sessionId: string, checkpointId: string): Promise<boolean>;
+
+  /**
+   * 清理会话快照
+   */
+  cleanup(sessionId: string): Promise<void>;
+
+  /**
+   * 获取存储统计
+   */
+  getStats(sessionId: string): Promise<{
+    count: number;
+    totalSize: number;
+    oldestSnapshot?: SnapshotMeta;
+    newestSnapshot?: SnapshotMeta;
+  }>;
 }
 
 // ============================================================================
@@ -254,7 +281,7 @@ export interface SnapshotSerializer {
    * @param data 原始数据
    * @returns 压缩后的数据
    */
-  compress?(data: string): Buffer;
+  compress?(data: string): Promise<Buffer> | Buffer;
   
   /**
    * 解压缩数据
@@ -262,63 +289,12 @@ export interface SnapshotSerializer {
    * @param data 压缩的数据
    * @returns 原始数据
    */
-  decompress?(data: Buffer): string;
+  decompress?(data: Buffer): Promise<string> | string;
 }
 
 // ============================================================================
 // 快照协调器接口
 // ============================================================================
-
-/**
- * 快照协调器接口
- * 
- * 协调各模块的快照创建和恢复
- */
-export interface SnapshotCoordinator {
-  /**
-   * 创建快照
-   * 
-   * @param sessionId 会话ID
-   * @param reason 创建原因
-   * @returns 检查点ID
-   */
-  createSnapshot(sessionId: string, reason?: string): Promise<string>;
-  
-  /**
-   * 恢复快照
-   * 
-   * @param sessionId 会话ID
-   * @param checkpointId 检查点ID
-   * @returns Promise
-   */
-  restoreSnapshot(sessionId: string, checkpointId: string): Promise<void>;
-  
-  /**
-   * 列出快照
-   * 
-   * @param sessionId 会话ID
-   * @returns 快照元数据列表
-   */
-  listSnapshots(sessionId: string): Promise<SnapshotMeta[]>;
-  
-  /**
-   * 删除快照
-   * 
-   * @param sessionId 会话ID
-   * @param checkpointId 检查点ID
-   * @returns 是否成功
-   */
-  deleteSnapshot(sessionId: string, checkpointId: string): Promise<boolean>;
-  
-  /**
-   * 验证快照
-   * 
-   * @param sessionId 会话ID
-   * @param checkpointId 检查点ID
-   * @returns 是否有效
-   */
-  validateSnapshot(sessionId: string, checkpointId: string): Promise<boolean>;
-}
 
 // ============================================================================
 // 快照管理器配置
@@ -328,22 +304,24 @@ export interface SnapshotCoordinator {
  * 快照管理器配置
  */
 export interface SnapshotManagerConfig {
-  /** 存储根目录 */
-  storageRoot: string;
-  
-  /** 是否启用压缩 */
-  enableCompression?: boolean;
+  /** 存储引擎 */
+  storage: SnapshotStorage;
   
   /** 快照版本 */
   version?: string;
   
-  /** 最大快照数量 */
-  maxSnapshots?: number;
+  /** 版本管理配置 */
+  versionConfig?: {
+    maxSnapshots?: number;
+    minSnapshots?: number;
+    expirationMs?: number;
+    cleanupStrategy?: 'oldest' | 'least-used' | 'size-based';
+  };
   
-  /** 自动清理旧快照 */
+  /** 是否自动清理 */
   autoCleanup?: boolean;
   
-  /** 增量快照支持 */
+  /** 是否启用增量快照 */
   incrementalSnapshot?: boolean;
 }
 
@@ -355,6 +333,8 @@ export interface SnapshotManagerConfig {
  * 快照异常基类
  */
 export class SnapshotError extends Error {
+  public cause?: Error;
+
   constructor(message: string) {
     super(message);
     this.name = 'SnapshotError';
@@ -419,4 +399,3 @@ export class SnapshotStorageError extends SnapshotError {
     }
   }
 }
-

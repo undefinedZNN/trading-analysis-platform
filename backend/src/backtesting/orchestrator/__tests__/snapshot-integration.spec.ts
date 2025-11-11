@@ -13,6 +13,9 @@ import {
 } from '../snapshot';
 import * as path from 'path';
 import * as os from 'os';
+
+const createTempDir = (prefix: string) =>
+  path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 import * as fs from 'fs/promises';
 
 describe('Snapshot System Integration Tests', () => {
@@ -31,7 +34,7 @@ describe('Snapshot System Integration Tests', () => {
   let isPaused = false;
   
   beforeEach(async () => {
-    testBaseDir = path.join(os.tmpdir(), `test-snapshots-integration-${Date.now()}`);
+    testBaseDir = createTempDir('test-snapshots-integration');
     
     // 创建完整的快照栈
     serializer = new JsonSerializer({
@@ -457,4 +460,3 @@ describe('Snapshot System Integration Tests', () => {
     });
   });
 });
-

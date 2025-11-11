@@ -104,28 +104,26 @@ describe('EquityCurveGenerator', () => {
     it('should generate equity curve from trades', () => {
       const curve = generator.generate(mockTrades);
 
-      expect(curve.timestamps).toHaveLength(5); // initial + 4 trades
-      expect(curve.equity).toHaveLength(5);
-      expect(curve.drawdown).toHaveLength(5);
+      // 日粒度聚合后只有 4 个唯一交易日
+      expect(curve.timestamps).toHaveLength(4);
+      expect(curve.equity).toHaveLength(4);
+      expect(curve.drawdown).toHaveLength(4);
     });
 
     it('should calculate equity correctly', () => {
       const curve = generator.generate(mockTrades);
 
-      // 初始: 10000
-      expect(parseFloat(curve.equity[0])).toBe(10000);
-
-      // 第1笔: 10000 - 25 = 9975
-      expect(parseFloat(curve.equity[1])).toBeCloseTo(9975, 1);
+      // 聚合后第 0 个点就是第一笔交易处理完的权益
+      expect(parseFloat(curve.equity[0])).toBeCloseTo(9975, 1);
 
       // 第2笔: 9975 + 1000 - 25.5 = 10949.5
-      expect(parseFloat(curve.equity[2])).toBeCloseTo(10949.5, 1);
+      expect(parseFloat(curve.equity[1])).toBeCloseTo(10949.5, 1);
 
       // 第3笔: 10949.5 - 26 = 10923.5
-      expect(parseFloat(curve.equity[3])).toBeCloseTo(10923.5, 1);
+      expect(parseFloat(curve.equity[2])).toBeCloseTo(10923.5, 1);
 
       // 第4笔: 10923.5 - 500 - 25.75 = 10397.75
-      expect(parseFloat(curve.equity[4])).toBeCloseTo(10397.75, 1);
+      expect(parseFloat(curve.equity[3])).toBeCloseTo(10397.75, 1);
     });
 
     it('should handle empty trades', () => {
@@ -140,8 +138,8 @@ describe('EquityCurveGenerator', () => {
       const singleTrade = [mockTrades[0]];
       const curve = generator.generate(singleTrade);
 
-      expect(curve.timestamps).toHaveLength(2); // initial + 1 trade
-      expect(curve.equity).toHaveLength(2);
+      expect(curve.timestamps).toHaveLength(1);
+      expect(curve.equity).toHaveLength(1);
     });
   });
 
@@ -152,11 +150,11 @@ describe('EquityCurveGenerator', () => {
       // 初始回撤应该为0
       expect(parseFloat(curve.drawdown[0])).toBe(0);
 
-      // 第一笔交易后，权益下降，回撤应该 > 0
-      expect(parseFloat(curve.drawdown[1])).toBeGreaterThan(0);
+      // 第二个点权益创新高，回撤应为 0
+      expect(parseFloat(curve.drawdown[1])).toBe(0);
 
-      // 第二笔交易后，权益增长到新高，回撤应该为0
-      expect(parseFloat(curve.drawdown[2])).toBe(0);
+      // 之后权益回落，回撤大于 0
+      expect(parseFloat(curve.drawdown[2])).toBeGreaterThan(0);
     });
 
     it('should track peak correctly', () => {
@@ -206,7 +204,7 @@ describe('EquityCurveGenerator', () => {
       });
 
       const curve = dayGenerator.generate(mockTrades);
-      expect(curve.timestamps).toHaveLength(5);
+      expect(curve.timestamps).toHaveLength(4);
 
       // 检查日期格式
       curve.timestamps.forEach(ts => {
@@ -280,8 +278,8 @@ describe('EquityCurveGenerator', () => {
 
       const curve = noFillGenerator.generate(gapTrades);
       
-      // 应该只有: 初始 + 2笔交易 = 3个点
-      expect(curve.timestamps).toHaveLength(3);
+      // 聚合后只有第1天和第5天两个点
+      expect(curve.timestamps).toHaveLength(2);
     });
   });
 
@@ -325,7 +323,7 @@ describe('EquityCurveGenerator', () => {
     it('should generate time series points', () => {
       const series = generator.generateTimeSeries(mockTrades);
 
-      expect(series).toHaveLength(5);
+      expect(series).toHaveLength(4);
       series.forEach(point => {
         expect(point).toHaveProperty('timestamp');
         expect(point).toHaveProperty('value');
@@ -337,7 +335,7 @@ describe('EquityCurveGenerator', () => {
     it('should generate drawdown series', () => {
       const series = generator.generateDrawdownSeries(mockTrades);
 
-      expect(series).toHaveLength(5);
+      expect(series).toHaveLength(4);
       series.forEach(point => {
         expect(point).toHaveProperty('timestamp');
         expect(point).toHaveProperty('value');
@@ -381,7 +379,7 @@ describe('EquityCurveGenerator', () => {
       ];
 
       const curve = generator.generate(noFeeTrades);
-      expect(parseFloat(curve.equity[1])).toBe(10100);
+      expect(parseFloat(curve.equity[0])).toBe(10100);
     });
 
     it('should handle trades with negative PnL', () => {
@@ -394,7 +392,7 @@ describe('EquityCurveGenerator', () => {
       ];
 
       const curve = generator.generate(lossTrades);
-      expect(parseFloat(curve.equity[1])).toBe(9490); // 10000 - 500 - 10
+      expect(parseFloat(curve.equity[0])).toBe(9490); // 10000 - 500 - 10
     });
 
     it('should handle unsorted trades', () => {
@@ -402,7 +400,7 @@ describe('EquityCurveGenerator', () => {
       const curve = generator.generate(unsortedTrades);
 
       // 应该自动排序
-      expect(curve.timestamps).toHaveLength(5);
+      expect(curve.timestamps).toHaveLength(4);
       
       // 检查时间戳是否按顺序
       for (let i = 1; i < curve.timestamps.length; i++) {
@@ -425,4 +423,3 @@ describe('EquityCurveGenerator', () => {
     });
   });
 });
-

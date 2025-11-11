@@ -8,7 +8,81 @@ import {
   createOrchestrator,
   createModuleCoordinator,
   type BacktestSessionConfig,
+  SessionEventType,
+  type StateChangedEventData,
 } from '../index';
+
+const DEFAULT_SYMBOL = 'BTCUSDT';
+
+function createDataConfig(): BacktestSessionConfig['data'] {
+  return {
+    source: {
+      provider: 'parquet-duckdb',
+      path: '/data/crypto',
+      symbols: [DEFAULT_SYMBOL],
+      timeRange: {
+        start: '2024-01-01T00:00:00Z',
+        end: '2024-01-31T23:59:59Z',
+      },
+      gapPolicy: 'forward-fill',
+    },
+    timeframe: {
+      primary: '1h',
+    },
+  };
+}
+
+function createStrategyConfig(): BacktestSessionConfig['strategy'] {
+  return {
+    strategyId: 'ma-crossover',
+    name: 'MA Crossover Strategy',
+    scriptContent: '// demo strategy script placeholder',
+    manifest: {
+      strategyId: 'ma-crossover',
+      name: 'MA Crossover Strategy',
+      version: '1.0.0',
+      description: 'Simple moving average crossover strategy',
+      author: 'Demo User',
+      requiredTimeframe: '1h',
+      featureDeps: [],
+      dataDeps: [{ symbol: DEFAULT_SYMBOL }],
+      defaultParameters: { fast: 10, slow: 30 },
+    },
+    parameters: { fast: 10, slow: 30 },
+  };
+}
+
+function createExecutionConfig(): BacktestSessionConfig['execution'] {
+  return {
+    initialCapital: '10000',
+    matching: {
+      marketFillPolicy: 'mid',
+      limitFillPolicy: 'limit-price',
+    },
+    slippage: {
+      model: 'fixed-spread',
+      params: { spread: 0.0005 },
+    },
+    fee: {
+      model: 'fixed-rate',
+      params: { maker: 0.001, taker: 0.002 },
+    },
+  };
+}
+
+function createRiskConfig(): BacktestSessionConfig['risk'] {
+  return {
+    rules: [
+      {
+        ruleId: 'max-drawdown',
+        type: 'max-drawdown',
+        enabled: true,
+        priority: 1,
+        params: { threshold: 0.2 },
+      },
+    ],
+  };
+}
 
 async function main() {
   // 1. 创建编排器
@@ -20,59 +94,33 @@ async function main() {
   console.log('2️⃣  定义会话配置...');
   const config: BacktestSessionConfig = {
     sessionId: 'my-first-backtest',
-    
-    // 数据配置
-    data: {
-      source: 'parquet',
-      basePath: '/data/crypto',
-      symbol: 'BTCUSDT',
-      startTime: '2024-01-01',
-      endTime: '2024-01-31',
-    },
-    
-    // 策略配置
-    strategy: {
-      strategyId: 'ma-crossover',
-      version: '1.0.0',
-      name: 'MA Crossover Strategy',
-      description: 'Simple moving average crossover strategy',
-      scriptPath: './strategies/ma-crossover.js',
-    },
-    
-    // 执行配置
-    execution: {
-      initialCapital: 10000,  // 初始资金
-      leverage: 1,             // 杠杆
-      slippageModel: {
-        type: 'fixed',
-        value: 0.001,          // 0.1% 滑点
-      },
-      feeModel: {
-        type: 'percentage',
-        makerFee: 0.001,       // 0.1% Maker 费用
-        takerFee: 0.002,       // 0.2% Taker 费用
-      },
-    },
+    data: createDataConfig(),
+    strategy: createStrategyConfig(),
+    execution: createExecutionConfig(),
+    risk: createRiskConfig(),
   };
   
   try {
     // 3. 创建会话
     console.log('3️⃣  创建会话...');
     const session = await orchestrator.createSession(config);
-    console.log(`✅ 会话创建成功: ${session.getState()}`);
+    console.log(`✅ 会话创建成功: ${session.state}`);
     
     // 4. 启动回测
     console.log('4️⃣  启动回测...');
     await orchestrator.start('my-first-backtest');
-    console.log(`✅ 会话状态: ${session.getState()}`);
+    console.log(`✅ 会话状态: ${session.state}`);
     
     // 5. 监听会话事件
-    session.on('StateChanged', (event) => {
-      console.log(`📊 状态变化: ${event.oldState} -> ${event.newState}`);
+    session.on(SessionEventType.StateChanged, (event) => {
+      const data = event.data as StateChangedEventData | undefined;
+      const from = data?.previousState ?? 'unknown';
+      const to = data?.currentState ?? session.state;
+      console.log(`📊 状态变化: ${from} -> ${to}`);
     });
     
-    session.on('Error', (event) => {
-      console.error(`❌ 错误: ${event.error}`);
+    session.on(SessionEventType.Failed, (event) => {
+      console.error(`❌ 错误: ${JSON.stringify(event.data)}`);
     });
     
     // 6. 等待一段时间（模拟回测运行）
@@ -81,20 +129,20 @@ async function main() {
     // 7. 暂停会话
     console.log('5️⃣  暂停会话...');
     await orchestrator.pause('my-first-backtest');
-    console.log(`✅ 会话状态: ${session.getState()}`);
+    console.log(`✅ 会话状态: ${session.state}`);
     
     // 8. 创建快照
     console.log('6️⃣  创建快照...');
     const checkpointId = await orchestrator.createSnapshot(
       'my-first-backtest',
-      'mid-test checkpoint'
+      'manual'
     );
     console.log(`✅ 快照创建成功: ${checkpointId}`);
     
     // 9. 恢复会话
     console.log('7️⃣  恢复会话...');
     await orchestrator.resume('my-first-backtest');
-    console.log(`✅ 会话状态: ${session.getState()}`);
+    console.log(`✅ 会话状态: ${session.state}`);
     
     // 10. 等待一段时间
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -102,7 +150,7 @@ async function main() {
     // 11. 停止会话
     console.log('8️⃣  停止会话...');
     await orchestrator.stop('my-first-backtest');
-    console.log(`✅ 会话状态: ${session.getState()}`);
+    console.log(`✅ 会话状态: ${session.state}`);
     
     // 12. 获取结果
     console.log('9️⃣  获取结果...');
@@ -143,4 +191,3 @@ if (require.main === module) {
 }
 
 export { main };
-

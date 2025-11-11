@@ -14,14 +14,19 @@ import type {
   CheckpointMeta,
   ModuleCoordinator,
 } from '../interfaces/orchestrator';
+import type {
+  SnapshotMeta,
+  ModuleSnapshot as SnapshotModuleSnapshot,
+  EventStoreCheckpoint,
+} from '../interfaces/snapshot';
 import {
   SessionNotFoundError,
   SessionAlreadyExistsError,
   SnapshotNotFoundError,
   OrchestratorError,
 } from '../interfaces/orchestrator';
-import type { Session, SessionState } from '../interfaces/session';
-import { SessionEventType } from '../interfaces/session';
+import type { Session } from '../interfaces/session';
+import { SessionEventType, SessionState } from '../interfaces/session';
 import type { BacktestSessionConfig } from '../interfaces/config';
 import type { ServiceContainer } from '../interfaces/container';
 import { createSession } from '../session';
@@ -156,22 +161,32 @@ export class OrchestratorImpl implements Orchestrator {
     // 创建快照ID
     const checkpointId = nanoid();
     
-    // 创建检查点元数据
-    const meta: CheckpointMeta = {
-      checkpointId,
+    const stats = session.getStats();
+    const moduleStates = this.moduleCoordinator.getModuleStates(container);
+    const modules = this.buildModuleSnapshots(moduleStates);
+    
+    const meta: SnapshotMeta = {
       sessionId,
+      checkpointId,
       createdAt: Date.now(),
+      status: session.state,
+      version: '1.0.0',
+      compressed: false,
       reason,
+      metadata: {
+        state: session.state,
+      },
     };
     
-    // 获取模块状态
-    const moduleStates = this.moduleCoordinator.getModuleStates(container);
+    const eventStoreCheckpoint: EventStoreCheckpoint = {
+      lastSequenceId: 'unknown',
+      processedCount: stats.processedEvents,
+    };
     
-    // 创建快照
     const snapshot: SessionSnapshot = {
       meta,
-      config: (session as any).config,
-      moduleStates,
+      modules,
+      eventStoreCheckpoint,
     };
     
     // 保存快照
@@ -189,7 +204,15 @@ export class OrchestratorImpl implements Orchestrator {
     
     for (const [key, snapshot] of this.snapshots) {
       if (key.startsWith(`${sessionId}:`)) {
-        snapshots.push(snapshot.meta);
+        snapshots.push({
+          checkpointId: snapshot.meta.checkpointId,
+          sessionId: snapshot.meta.sessionId,
+          createdAt: snapshot.meta.createdAt,
+          sequenceId: snapshot.meta.sequenceId,
+          reason: snapshot.meta.reason,
+          size: snapshot.meta.size,
+          metadata: snapshot.meta.metadata,
+        });
       }
     }
     
@@ -211,13 +234,15 @@ export class OrchestratorImpl implements Orchestrator {
     const snapshot = this.snapshots.get(snapshotKey);
     
     if (!snapshot) {
-      throw new SnapshotNotFoundError(checkpointId);
+      throw new SnapshotNotFoundError(sessionId, checkpointId);
     }
     
     // 恢复模块状态
+    const moduleStateMap = this.extractModuleStates(snapshot.modules);
+    
     await this.moduleCoordinator.restoreModuleStates(
       container,
-      snapshot.moduleStates
+      moduleStateMap
     );
   }
   
@@ -227,7 +252,8 @@ export class OrchestratorImpl implements Orchestrator {
   async getResults(sessionId: string): Promise<SessionResults> {
     const session = this.getSessionOrThrow(sessionId);
     const stats = session.getStats();
-    const state = session.getState();
+    const state = session.state;
+    const metadata = session.metadata;
     const container = (session as any).container as ServiceContainer;
     
     // 获取 LedgerService 的交易记录
@@ -239,25 +265,23 @@ export class OrchestratorImpl implements Orchestrator {
     }
     
     // 确定状态
-    let status: 'completed' | 'failed' | 'stopped';
-    if (state === 'Stopped') {
-      status = 'stopped';
-    } else if (state === 'Destroyed') {
-      status = 'completed';
-    } else {
-      status = 'completed';
-    }
+    const status = this.mapStateToResultStatus(state);
+    const startTime = metadata.startedAt ?? metadata.createdAt;
+    const endTime = metadata.completedAt ?? Date.now();
+    const duration =
+      metadata.duration ??
+      (metadata.startedAt ? endTime - metadata.startedAt : 0);
     
     // 构建结果
     const results: SessionResults = {
       sessionId,
       status,
-      startTime: stats.startTime || Date.now(),
-      endTime: stats.endTime || Date.now(),
-      duration: stats.duration || 0,
+      startTime,
+      endTime,
+      duration,
       stats: {
-        processedEvents: stats.processedEvents || 0,
-        errorCount: stats.errorCount || 0,
+        processedEvents: stats.processedEvents,
+        errorCount: stats.errorCount,
       },
       trades,
     };
@@ -309,6 +333,48 @@ export class OrchestratorImpl implements Orchestrator {
     return session;
   }
   
+  private buildModuleSnapshots(
+    states: Record<string, unknown>
+  ): Record<string, SnapshotModuleSnapshot> {
+    const modules: Record<string, SnapshotModuleSnapshot> = {};
+    const timestamp = Date.now();
+    
+    Object.entries(states).forEach(([key, state]) => {
+      modules[key] = {
+        state,
+        timestamp,
+      };
+    });
+    
+    return modules;
+  }
+  
+  private extractModuleStates(
+    modules: Record<string, SnapshotModuleSnapshot>
+  ): Record<string, unknown> {
+    const states: Record<string, unknown> = {};
+    Object.entries(modules).forEach(([key, snapshot]) => {
+      states[key] = snapshot.state;
+    });
+    return states;
+  }
+  
+  private mapStateToResultStatus(
+    state: SessionState
+  ): 'completed' | 'failed' | 'stopped' {
+    if (state === SessionState.Failed) {
+      return 'failed';
+    }
+    if (
+      state === SessionState.Stopped ||
+      state === SessionState.Paused ||
+      state === SessionState.Idle
+    ) {
+      return 'stopped';
+    }
+    return 'completed';
+  }
+  
   /**
    * 创建服务容器
    * 
@@ -337,4 +403,3 @@ export class OrchestratorImpl implements Orchestrator {
 export function createOrchestrator(moduleCoordinator: ModuleCoordinator): Orchestrator {
   return new OrchestratorImpl(moduleCoordinator);
 }
-

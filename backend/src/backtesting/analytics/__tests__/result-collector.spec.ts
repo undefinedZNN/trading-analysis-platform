@@ -150,6 +150,7 @@ describe('ResultCollector', () => {
     });
 
     it('should create output directory if autoCreateDir is true', async () => {
+      (fs.access as jest.Mock).mockRejectedValueOnce(new Error('not found'));
       await collector.collectResults('test-session');
 
       expect(fs.mkdir).toHaveBeenCalled();
@@ -355,7 +356,7 @@ describe('ResultCollector', () => {
     it('should throw error for unsupported formats', async () => {
       await expect(
         collector.exportResults('test-session', 'parquet' as any, '/tmp/export.parquet')
-      ).rejects.toThrow('not yet implemented');
+      ).rejects.toThrow('Failed to export results to parquet');
     });
 
     it('should create output directory if it does not exist', async () => {
@@ -396,6 +397,7 @@ describe('ResultCollector', () => {
 
   describe('error handling', () => {
     it('should handle file system errors', async () => {
+      (fs.access as jest.Mock).mockRejectedValue(new Error('missing'));
       (fs.mkdir as jest.Mock).mockRejectedValue(new Error('Permission denied'));
 
       await expect(
@@ -404,11 +406,12 @@ describe('ResultCollector', () => {
     });
 
     it('should provide detailed error messages', async () => {
+      (fs.access as jest.Mock).mockRejectedValue(new Error('missing'));
       (fs.mkdir as jest.Mock).mockRejectedValue(new Error('Disk full'));
 
+      expect.assertions(2);
       try {
         await collector.collectResults('test-session');
-        fail('Should have thrown error');
       } catch (error: any) {
         expect(error.message).toContain('Failed to collect results');
         expect(error.message).toContain('test-session');
@@ -478,4 +481,3 @@ describe('ResultCollector', () => {
     });
   });
 });
-

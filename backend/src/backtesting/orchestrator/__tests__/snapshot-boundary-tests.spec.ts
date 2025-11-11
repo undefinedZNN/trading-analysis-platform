@@ -13,6 +13,9 @@ import {
 } from '../snapshot';
 import * as path from 'path';
 import * as os from 'os';
+
+const createTempDir = (prefix: string) =>
+  path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 import * as fs from 'fs/promises';
 
 describe('Snapshot Boundary and Stress Tests', () => {
@@ -23,7 +26,7 @@ describe('Snapshot Boundary and Stress Tests', () => {
   let testBaseDir: string;
   
   beforeEach(async () => {
-    testBaseDir = path.join(os.tmpdir(), `test-snapshots-boundary-${Date.now()}`);
+    testBaseDir = createTempDir('test-snapshots-boundary');
     
     serializer = new JsonSerializer();
     storage = new FileStorage(serializer, {
@@ -142,7 +145,7 @@ describe('Snapshot Boundary and Stress Tests', () => {
       expect(result.success).toBe(true);
       
       const snapshot = await manager.loadSnapshot('unicode-session', result.checkpointId!);
-      expect(snapshot.modules['unicode-module'].state.emoji).toBe('🚀🎉💰📈');
+      expect((snapshot.modules['unicode-module'].state as any).emoji).toBe('🚀🎉💰📈');
     });
     
     it('should handle special characters in session ID', async () => {
@@ -234,7 +237,7 @@ describe('Snapshot Boundary and Stress Tests', () => {
       
       const snapshot = await manager.loadSnapshot('undefined-session', result.checkpointId!);
       // undefined 会被 JSON 忽略
-      expect(snapshot.modules['undefined-module'].state.undefined).toBeUndefined();
+      expect((snapshot.modules['undefined-module'].state as any).undefined).toBeUndefined();
     });
     
     it('should handle NaN and Infinity', async () => {
@@ -253,7 +256,7 @@ describe('Snapshot Boundary and Stress Tests', () => {
       
       const snapshot = await manager.loadSnapshot('numbers-session', result.checkpointId!);
       // NaN 和 Infinity 会被转换为 null
-      expect(snapshot.modules['special-numbers'].state.nan).toBeNull();
+      expect((snapshot.modules['special-numbers'].state as any).nan).toBeNull();
     });
     
     it('should handle Date objects', async () => {
@@ -272,7 +275,7 @@ describe('Snapshot Boundary and Stress Tests', () => {
       
       const snapshot = await manager.loadSnapshot('date-session', result.checkpointId!);
       // Date 会被序列化为字符串
-      expect(typeof snapshot.modules['date-module'].state.date).toBe('string');
+      expect(typeof (snapshot.modules['date-module'].state as any).date).toBe('string');
     });
   });
   
@@ -432,4 +435,3 @@ describe('Snapshot Boundary and Stress Tests', () => {
     });
   });
 });
-

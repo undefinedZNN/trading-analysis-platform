@@ -100,6 +100,13 @@ export class DefaultSession implements Session {
   }
   
   /**
+   * 兼容旧接口的方法形式
+   */
+  getState(): SessionState {
+    return this.state;
+  }
+  
+  /**
    * 获取会话元数据
    */
   get metadata(): SessionMetadata {
@@ -354,4 +361,3 @@ export function createSession(
 ): Session {
   return new DefaultSession(config, container);
 }
-

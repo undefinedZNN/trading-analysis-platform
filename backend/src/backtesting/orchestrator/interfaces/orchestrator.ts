@@ -9,6 +9,9 @@
 import type { Session } from './session';
 import type { BacktestSessionConfig } from './config';
 import type { ServiceContainer } from './container';
+import type { SessionSnapshot } from './snapshot';
+export type { SessionSnapshot } from './snapshot';
+export { SnapshotNotFoundError } from './snapshot';
 
 // ============================================================================
 // 快照相关
@@ -38,23 +41,6 @@ export interface CheckpointMeta {
   
   /** 其他元数据 */
   metadata?: Record<string, unknown>;
-}
-
-/**
- * 会话快照
- */
-export interface SessionSnapshot {
-  /** 检查点元数据 */
-  meta: CheckpointMeta;
-  
-  /** 会话配置 */
-  config: BacktestSessionConfig;
-  
-  /** 模块状态 */
-  moduleStates: Record<string, unknown>;
-  
-  /** 其他数据 */
-  data?: Record<string, unknown>;
 }
 
 // ============================================================================
@@ -303,14 +289,3 @@ export class SessionAlreadyExistsError extends OrchestratorError {
     this.name = 'SessionAlreadyExistsError';
   }
 }
-
-/**
- * 快照不存在异常
- */
-export class SnapshotNotFoundError extends OrchestratorError {
-  constructor(checkpointId: string) {
-    super(`Snapshot not found: ${checkpointId}`);
-    this.name = 'SnapshotNotFoundError';
-  }
-}
-

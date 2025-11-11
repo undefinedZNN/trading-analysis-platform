@@ -10,6 +10,15 @@ import * as path from 'path';
 describe('EventStore', () => {
   let store: EventStore;
   const testStorageDir = './test-data/events';
+  const createEvent = (i = 0): BaseEvent<{ index?: number }> => ({
+    eventId: `evt-${i}`,
+    eventType: 'market.bar',
+    sessionId: 'session-1',
+    sequenceId: i.toString(),
+    timestamp: new Date(Date.now() + i).toISOString(),
+    source: 'test-suite',
+    payload: { index: i },
+  });
 
   beforeEach(() => {
     // 使用测试目录，禁用持久化以加快测试
@@ -31,38 +40,28 @@ describe('EventStore', () => {
 
   describe('事件追加', () => {
     it('should append event to memory buffer', () => {
-      const event: BaseEvent = {
-        type: 'market.bar',
-        timestamp: Date.now(),
-        payload: { symbol: 'BTC/USDT', close: '50000' },
-      };
-
-      store.append(event);
+      store.append(createEvent());
 
       expect(store.getEventCount()).toBe(1);
 
       const events = store.getAll();
       expect(events).toHaveLength(1);
-      expect(events[0].type).toBe('market.bar');
-      expect(events[0].eventId).toBe(0);
+      expect(events[0].sequenceId).toBe('0');
+      const payload = events[0].payload as { index?: number };
+      expect(payload.index).toBeUndefined();
     });
 
     it('should append multiple events', () => {
       for (let i = 0; i < 10; i++) {
-        const event: BaseEvent = {
-          type: 'market.bar',
-          timestamp: Date.now() + i,
-          payload: { index: i },
-        };
-        store.append(event);
+        store.append(createEvent(i));
       }
 
       expect(store.getEventCount()).toBe(10);
 
       const events = store.getAll();
       expect(events).toHaveLength(10);
-      expect(events[0].eventId).toBe(0);
-      expect(events[9].eventId).toBe(9);
+      expect(events[0].sequenceId).toBe('0');
+      expect(events[9].sequenceId).toBe('9');
     });
 
     it('should handle buffer overflow (ring buffer)', () => {
@@ -70,12 +69,7 @@ describe('EventStore', () => {
 
       // 追加超过缓冲区大小的事件
       for (let i = 0; i < bufferSize + 50; i++) {
-        const event: BaseEvent = {
-          type: 'market.bar',
-          timestamp: Date.now() + i,
-          payload: { index: i },
-        };
-        store.append(event);
+        store.append(createEvent(i));
       }
 
       // 缓冲区应该只保留最近的 bufferSize 个事件
@@ -87,12 +81,7 @@ describe('EventStore', () => {
     beforeEach(() => {
       // 追加10个事件
       for (let i = 0; i < 10; i++) {
-        const event: BaseEvent = {
-          type: 'market.bar',
-          timestamp: Date.now() + i,
-          payload: { index: i },
-        };
-        store.append(event);
+        store.append(createEvent(i));
       }
     });
 
@@ -100,24 +89,24 @@ describe('EventStore', () => {
       const events = store.getRange(2, 5);
 
       expect(events).toHaveLength(4);
-      expect(events[0].eventId).toBe(2);
-      expect(events[3].eventId).toBe(5);
+      expect(events[0].sequenceId).toBe('2');
+      expect(events[3].sequenceId).toBe('5');
     });
 
     it('should get events from specific ID', () => {
       const events = store.getFrom(7);
 
       expect(events).toHaveLength(3);
-      expect(events[0].eventId).toBe(7);
-      expect(events[2].eventId).toBe(9);
+      expect(events[0].sequenceId).toBe('7');
+      expect(events[2].sequenceId).toBe('9');
     });
 
     it('should get all events', () => {
       const events = store.getAll();
 
       expect(events).toHaveLength(10);
-      expect(events[0].eventId).toBe(0);
-      expect(events[9].eventId).toBe(9);
+      expect(events[0].sequenceId).toBe('0');
+      expect(events[9].sequenceId).toBe('9');
     });
 
     it('should return empty array for invalid range', () => {
@@ -131,21 +120,16 @@ describe('EventStore', () => {
     beforeEach(() => {
       // 追加一些事件
       for (let i = 0; i < 5; i++) {
-        const event: BaseEvent = {
-          type: 'market.bar',
-          timestamp: Date.now() + i,
-          payload: { index: i },
-        };
-        store.append(event);
+        store.append(createEvent(i));
       }
     });
 
     it('should create checkpoint', () => {
-      const meta = store.checkpoint('cp1');
+      const meta = store.checkpoint('cp1') as any;
 
       expect(meta.checkpointId).toBe('cp1');
       expect(meta.eventId).toBe(4); // 最后一个事件 ID
-      expect(meta.timestamp).toBeLessThanOrEqual(Date.now());
+      expect(new Date(meta.timestamp).getTime()).toBeLessThanOrEqual(Date.now());
     });
 
     it('should list checkpoints', () => {
@@ -162,7 +146,7 @@ describe('EventStore', () => {
     it('should restore checkpoint', () => {
       store.checkpoint('cp1');
 
-      const snapshot = store.restore('cp1');
+      const snapshot = store.restore('cp1') as any;
 
       expect(snapshot.checkpointId).toBe('cp1');
       expect(snapshot.eventId).toBe(4);
@@ -179,12 +163,7 @@ describe('EventStore', () => {
   describe('清空', () => {
     beforeEach(() => {
       for (let i = 0; i < 5; i++) {
-        const event: BaseEvent = {
-          type: 'market.bar',
-          timestamp: Date.now() + i,
-          payload: { index: i },
-        };
-        store.append(event);
+        store.append(createEvent(i));
       }
       store.checkpoint('cp1');
     });
@@ -210,12 +189,7 @@ describe('EventStore', () => {
 
       // 追加5个事件触发自动刷盘
       for (let i = 0; i < 5; i++) {
-        const event: BaseEvent = {
-          type: 'market.bar',
-          timestamp: Date.now() + i,
-          payload: { index: i },
-        };
-        persistentStore.append(event);
+        persistentStore.append(createEvent(i));
       }
 
       // 等待刷盘（同步刷盘，应该立即完成）
@@ -231,4 +205,3 @@ describe('EventStore', () => {
     });
   });
 });
-
