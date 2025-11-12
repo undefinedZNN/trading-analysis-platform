@@ -554,13 +554,18 @@ async function runTests(): Promise<void> {
   });
 
   await test('精度：链式运算', () => {
+    // 计算: (100 + 50) * 2 - 100 / 2
+    // = 150 * 2 - 100 / 2
+    // = 300 - 100 / 2  
+    // = 200 / 2
+    // = 100
     const result = new Big('100')
       .plus('50')
       .times('2')
       .minus('100')
       .div('2');
     
-    assert(result.eq('50'), 'Should maintain precision in chain operations');
+    assert(result.eq('100'), 'Should maintain precision in chain operations');
   });
 
   await test('精度：科学计数法', () => {

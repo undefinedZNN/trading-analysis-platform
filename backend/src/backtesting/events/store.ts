@@ -88,10 +88,10 @@ export class EventStore {
 
   constructor(config: EventStoreConfig = {}) {
     this.config = {
-      memoryBufferSize: config.memoryBufferSize ?? 10000,
+      memoryBufferSize: config.memoryBufferSize ?? 100000, // 增加到 100K 以支持大规模事件
       storageDir: config.storageDir ?? './data/events',
       enablePersistence: config.enablePersistence ?? true,
-      flushBatchSize: config.flushBatchSize ?? 1000,
+      flushBatchSize: config.flushBatchSize ?? 5000, // 增加批次大小以提高性能
       autoFlushIntervalMs: config.autoFlushIntervalMs ?? 5000,
     };
 
@@ -366,10 +366,10 @@ export class EventStore {
   }
 
   /**
-   * 获取事件总数
+   * 获取事件总数（累计追加的事件数，包括已刷盘的）
    */
   getEventCount(): number {
-    return this.memoryBuffer.length;
+    return this.eventIdCounter;
   }
 
   /**

@@ -238,7 +238,8 @@ export class SnapshotResumeStrategy implements TestStrategy {
    * 处理每个bar
    */
   private async onBar(bar: any): Promise<void> {
-    const price = new Big(bar.close);
+    const barData = bar.data || bar;
+    const price = new Big(barData.close);
 
     // 定期交易
     if (this.barCount % this.config.tradeInterval === 0) {

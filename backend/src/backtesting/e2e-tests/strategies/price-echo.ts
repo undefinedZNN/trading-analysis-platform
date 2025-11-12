@@ -180,25 +180,30 @@ export class PriceEchoStrategy implements TestStrategy {
    * 处理每个bar（模拟策略行为）
    */
   private async onBar(bar: any): Promise<void> {
+    // 从 data 对象中提取 OHLCV 数据
+    const barData = bar.data || bar;
+    const close = barData.close;
+    const volume = barData.volume;
+
     // 记录日志
     this.logs.push({
       timestamp: bar.timestamp,
       symbol: bar.symbol,
-      close: bar.close,
-      volume: bar.volume,
+      close,
+      volume,
     });
 
     // 验证数据完整性
-    if (!bar.close || !bar.volume) {
+    if (!close || !volume) {
       throw new Error(`Invalid bar data at ${bar.timestamp}`);
     }
 
     // 模拟特征读取（实际应该从FeatureRegistry读取）
     const features = {
-      close: parseFloat(bar.close),
-      volume: parseFloat(bar.volume),
-      MA_20: parseFloat(bar.close), // 简化，实际需要计算
-      EMA_20: parseFloat(bar.close), // 简化，实际需要计算
+      close: parseFloat(close),
+      volume: parseFloat(volume),
+      MA_20: parseFloat(close), // 简化，实际需要计算
+      EMA_20: parseFloat(close), // 简化，实际需要计算
     };
 
     // 验证特征值

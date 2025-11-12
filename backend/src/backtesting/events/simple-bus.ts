@@ -245,11 +245,7 @@ export class SimpleEventBus {
   private createEventPipeline(): Observable<SimpleEvent> {
     return this.eventSubject.pipe(
       filter(() => this.stateMachine.getStatus() === 'running'),
-      tap((event) => {
-        this.store.append(event);
-        this.eventCount++;
-        this.updateMetrics();
-      }),
+      // 注意：事件已在 publish() 中存储到 store，此处只负责分发给订阅者
       takeUntil(this.destroySubject),
       share()
     );
@@ -312,6 +308,14 @@ export class SimpleEventBus {
     if (this.stateMachine.getStatus() === 'stopped') {
       throw new Error('Cannot publish event: EventBus is stopped');
     }
+    
+    // 立即存储事件到 store（不依赖订阅者）
+    if (this.stateMachine.getStatus() === 'running') {
+      this.store.append(event);
+      this.eventCount++;
+      this.updateMetrics();
+    }
+    
     this.eventSubject.next(event);
   }
 

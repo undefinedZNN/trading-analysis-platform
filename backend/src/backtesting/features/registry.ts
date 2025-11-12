@@ -131,30 +131,34 @@ export class FeatureRegistryImpl implements FeatureRegistry {
    * 校验特征ID格式
    */
   private validateFeatureId(id: string): boolean {
-    // 特征ID应该是非空字符串，可以包含字母、数字、下划线和连字符
-    return /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(id);
+    // 特征ID应该是非空字符串，可以包含字母、数字、下划线、连字符和点号
+    // 必须以字母开头，以支持命名空间（如 my.namespace.FeatureName）
+    return /^[a-zA-Z][a-zA-Z0-9_.-]*$/.test(id);
   }
 
   /**
    * 校验特征的依赖
+   * 
+   * 注意：在注册时不强制要求依赖已经存在，允许后续注册依赖特征。
+   * 循环依赖检测在 resolve 阶段进行。
    */
   private validateDependencies(feature: FeatureDefinition): void {
     if (!feature.dependsOn) {
       return;
     }
 
+    // 检查是否存在自引用（最简单的循环依赖）
     for (const dep of feature.dependsOn) {
-      if (dep.type === 'feature') {
-        // 检查依赖的特征是否已注册
-        const depFeature = this.get(dep.ref);
-        if (!depFeature && !dep.optional) {
-          throw new Error(
-            `Feature '${feature.id}' depends on '${dep.ref}', but it is not registered`
-          );
-        }
+      if (dep.type === 'feature' && dep.ref === feature.id) {
+        throw new Error(
+          `Feature '${feature.id}' cannot depend on itself (self-reference detected)`
+        );
       }
       // 字段依赖不需要在这里校验，因为字段来自BarEvent
     }
+    
+    // 注意：依赖特征可能还未注册，这是允许的
+    // 在 resolve() 时会检查所有依赖是否存在并检测循环依赖
   }
 
   /**

@@ -76,7 +76,7 @@ export class FixedRebalanceStrategy implements TestStrategy {
       rebalanceInterval: 100, // Every 100 bars
       targetAllocation: 0.5, // 50% position
       feeRate: 0.001, // 0.1%
-      expectedTrades: 40, // ~4 days * 24h * 60m / 100
+      expectedTrades: 55, // ~4 days * 24h * 60m / 100 = 5760 bars / 100 = ~58 trades
       ...config,
     };
     
@@ -208,7 +208,15 @@ export class FixedRebalanceStrategy implements TestStrategy {
    * 处理每个bar
    */
   private async onBar(bar: any): Promise<void> {
-    const price = new Big(bar.close);
+    // 从 data 对象中提取收盘价
+    const barData = bar.data || bar;
+    const closePrice = barData.close;
+    
+    if (!closePrice) {
+      throw new Error(`Invalid bar data: missing close price at ${bar.timestamp}`);
+    }
+
+    const price = new Big(closePrice);
 
     // 每隔一定数量的bar进行再平衡
     if (this.barCount % this.config.rebalanceInterval === 0) {

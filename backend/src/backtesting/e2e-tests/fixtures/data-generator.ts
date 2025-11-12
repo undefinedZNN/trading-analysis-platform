@@ -91,9 +91,11 @@ export class DataGenerator {
    * 生成趋势数据（上涨）
    */
   static generateUptrend(days: number): BarEvent[] {
+    const startTime = new Date('2024-01-01');
+    const endTime = new Date(startTime.getTime() + days * 24 * 60 * 60 * 1000);
     return this.generateBars({
-      startTime: new Date('2024-01-01'),
-      endTime: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+      startTime,
+      endTime,
       interval: 60000, // 1 minute
       initialPrice: 50000,
       volatility: 0.01,
@@ -105,9 +107,11 @@ export class DataGenerator {
    * 生成趋势数据（下跌）
    */
   static generateDowntrend(days: number): BarEvent[] {
+    const startTime = new Date('2024-01-01');
+    const endTime = new Date(startTime.getTime() + days * 24 * 60 * 60 * 1000);
     return this.generateBars({
-      startTime: new Date('2024-01-01'),
-      endTime: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+      startTime,
+      endTime,
       interval: 60000,
       initialPrice: 50000,
       volatility: 0.01,
@@ -119,9 +123,11 @@ export class DataGenerator {
    * 生成横盘数据
    */
   static generateSideways(days: number): BarEvent[] {
+    const startTime = new Date('2024-01-01');
+    const endTime = new Date(startTime.getTime() + days * 24 * 60 * 60 * 1000);
     return this.generateBars({
-      startTime: new Date('2024-01-01'),
-      endTime: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+      startTime,
+      endTime,
       interval: 60000,
       initialPrice: 50000,
       volatility: 0.005,
@@ -133,9 +139,11 @@ export class DataGenerator {
    * 生成高波动数据
    */
   static generateVolatile(days: number): BarEvent[] {
+    const startTime = new Date('2024-01-01');
+    const endTime = new Date(startTime.getTime() + days * 24 * 60 * 60 * 1000);
     return this.generateBars({
-      startTime: new Date('2024-01-01'),
-      endTime: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+      startTime,
+      endTime,
       interval: 60000,
       initialPrice: 50000,
       volatility: 0.05, // High volatility
