@@ -8,9 +8,13 @@ import { StrategiesController } from './strategies/strategies.controller';
 import { StrategiesService } from './strategies/strategies.service';
 import { StrategyScriptParser } from './strategies/strategy-script.parser';
 import { StrategyScriptValidator } from './strategies/strategy-script.validator';
+import { BacktestTasksModule } from './tasks/backtest-tasks.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([StrategyEntity, ScriptVersionEntity])],
+  imports: [
+    TypeOrmModule.forFeature([StrategyEntity, ScriptVersionEntity]),
+    BacktestTasksModule,
+  ],
   controllers: [BacktestingController, StrategiesController],
   providers: [
     BacktestingService,
