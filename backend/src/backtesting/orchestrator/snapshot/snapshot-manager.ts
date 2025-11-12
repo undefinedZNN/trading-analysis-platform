@@ -325,6 +325,7 @@ export class SnapshotManager {
    */
   private async collectAllModuleStates(): Promise<Record<string, ModuleSnapshot>> {
     const modules: Record<string, ModuleSnapshot> = {};
+    const errors: Array<{ name: string; error: unknown }> = [];
     
     for (const [name, collector] of this.collectors) {
       try {
@@ -335,8 +336,19 @@ export class SnapshotManager {
         };
       } catch (error) {
         console.error(`Failed to collect state from module ${name}:`, error);
-        // 继续收集其他模块
+        errors.push({ name, error });
       }
+    }
+    
+    if (errors.length > 0) {
+      const detail = errors
+        .map(({ name, error }) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          return `${name}: ${message}`;
+        })
+        .join('; ');
+      throw new SnapshotError(`Failed to collect module states: ${detail}`);
     }
     
     return modules;

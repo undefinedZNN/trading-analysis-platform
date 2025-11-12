@@ -29,6 +29,7 @@ import type { Session } from '../interfaces/session';
 import { SessionEventType, SessionState } from '../interfaces/session';
 import type { BacktestSessionConfig } from '../interfaces/config';
 import type { ServiceContainer } from '../interfaces/container';
+import { DefaultServiceContainer } from '../container/service-container';
 import { createSession } from '../session';
 import { mergeConfig } from '../config/merger';
 import { validateConfigOrThrow } from '../config/validator';
@@ -42,6 +43,9 @@ export class OrchestratorImpl implements Orchestrator {
   
   /** 快照存储 */
   private snapshots: Map<string, SessionSnapshot> = new Map();
+  
+  /** 快照序列号（用于排序稳定性） */
+  private snapshotSequence = 0;
   
   /** 模块协调器 */
   private moduleCoordinator: ModuleCoordinator;
@@ -160,6 +164,9 @@ export class OrchestratorImpl implements Orchestrator {
     
     // 创建快照ID
     const checkpointId = nanoid();
+    const createdAt = Date.now();
+    const sequence = ++this.snapshotSequence;
+    const sequenceId = sequence.toString().padStart(12, '0');
     
     const stats = session.getStats();
     const moduleStates = this.moduleCoordinator.getModuleStates(container);
@@ -168,11 +175,12 @@ export class OrchestratorImpl implements Orchestrator {
     const meta: SnapshotMeta = {
       sessionId,
       checkpointId,
-      createdAt: Date.now(),
+      createdAt,
       status: session.state,
       version: '1.0.0',
       compressed: false,
       reason,
+      sequenceId,
       metadata: {
         state: session.state,
       },
@@ -216,8 +224,15 @@ export class OrchestratorImpl implements Orchestrator {
       }
     }
     
-    // 按创建时间降序排列
-    snapshots.sort((a, b) => b.createdAt - a.createdAt);
+    // 按创建时间降序排列；如果时间相同，再按照序列号降序排列
+    snapshots.sort((a, b) => {
+      if (b.createdAt !== a.createdAt) {
+        return b.createdAt - a.createdAt;
+      }
+      const seqA = a.sequenceId ? Number(a.sequenceId) : 0;
+      const seqB = b.sequenceId ? Number(b.sequenceId) : 0;
+      return seqB - seqA;
+    });
     
     return snapshots;
   }
@@ -386,9 +401,7 @@ export class OrchestratorImpl implements Orchestrator {
     // 注册所有必要的服务：DataProvider, EventBus, 等等
     // 为了简化，我们返回一个基本的容器实现
     
-    // 导入 ServiceContainerImpl
-    const { ServiceContainerImpl } = require('../container/service-container');
-    const container = new ServiceContainerImpl();
+    const container = new DefaultServiceContainer();
     
     // 注册配置
     container.registerInstance('Config', config);

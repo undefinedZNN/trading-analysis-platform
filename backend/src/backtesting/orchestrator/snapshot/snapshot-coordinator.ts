@@ -448,13 +448,15 @@ export class SnapshotCoordinator {
     action: () => Promise<void>
   ): Promise<{ name: string; success: boolean; duration: number; error?: string }> {
     const startTime = Date.now();
+    const timeout = this.createTimeoutPromise();
     
     try {
       // 设置超时
       await Promise.race([
         action(),
-        this.timeoutPromise(),
+        timeout.promise,
       ]);
+      timeout.cancel();
       
       return {
         name,
@@ -462,6 +464,7 @@ export class SnapshotCoordinator {
         duration: Date.now() - startTime,
       };
     } catch (error) {
+      timeout.cancel();
       return {
         name,
         success: false,
@@ -472,14 +475,24 @@ export class SnapshotCoordinator {
   }
   
   /**
-   * 超时Promise
+   * 超时控制
    */
-  private timeoutPromise(): Promise<never> {
-    return new Promise((_, reject) => {
-      setTimeout(() => {
+  private createTimeoutPromise(): { promise: Promise<never>; cancel: () => void } {
+    let timer: NodeJS.Timeout | null = null;
+    const promise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
         reject(new Error(`Operation timeout after ${this.config.timeout}ms`));
       }, this.config.timeout);
     });
+
+    const cancel = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    return { promise, cancel };
   }
   
   /**
@@ -506,4 +519,3 @@ export class SnapshotCoordinator {
 export function createSnapshotCoordinator(config: CoordinatorConfig): SnapshotCoordinator {
   return new SnapshotCoordinator(config);
 }
-

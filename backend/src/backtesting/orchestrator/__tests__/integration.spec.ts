@@ -8,7 +8,7 @@ import { createOrchestrator } from '../orchestrator/orchestrator';
 import { createModuleCoordinator } from '../orchestrator/module-coordinator';
 import type { BacktestSessionConfig } from '../interfaces/config';
 import type { StrategyManifest } from '../../strategy/interfaces';
-import { SessionState, SessionEventType } from '../interfaces/session';
+import { SessionState, SessionEventType, type StateChangedEventData } from '../interfaces/session';
 
 describe('Orchestrator Integration Tests', () => {
   let orchestrator: ReturnType<typeof createOrchestrator>;
@@ -24,41 +24,97 @@ describe('Orchestrator Integration Tests', () => {
     defaultParameters: {},
   };
 
-  const createConfig = (sessionId: string): BacktestSessionConfig => ({
-    sessionId,
-    data: {
-      source: {
-        provider: 'parquet-duckdb',
-        path: '/data',
-        symbols: ['BTCUSDT'],
-        timeRange: {
-          start: '2024-01-01T00:00:00Z',
-          end: '2024-01-31T00:00:00Z',
+  const createConfig = (
+    sessionId: string,
+    overrides?: Partial<BacktestSessionConfig>
+  ): BacktestSessionConfig => {
+    const base: BacktestSessionConfig = {
+      sessionId,
+      data: {
+        source: {
+          provider: 'parquet-duckdb',
+          path: '/data',
+          symbols: ['BTCUSDT'],
+          timeRange: {
+            start: '2024-01-01T00:00:00Z',
+            end: '2024-01-31T00:00:00Z',
+          },
+          gapPolicy: 'drop',
         },
-        gapPolicy: 'drop',
+        timeframe: {
+          primary: '1h',
+        },
       },
-      timeframe: {
-        primary: '1h',
+      strategy: {
+        strategyId: 'integration-strategy',
+        name: 'Integration Strategy',
+        scriptContent: 'export default {};',
+        manifest,
       },
-    },
-    strategy: {
-      strategyId: 'integration-strategy',
-      name: 'Integration Strategy',
-      scriptContent: 'export default {};',
-      manifest,
-    },
-    execution: {
-      initialCapital: '10000',
-      matching: { marketFillPolicy: 'close' },
-      slippage: { model: 'zero' },
-      fee: { model: 'zero' },
-    },
-    risk: {
-      rules: [
-        { ruleId: 'max-positions', type: 'max-position', enabled: true, priority: 1, params: { maxPositions: 5 } },
-      ],
-    },
-  });
+      execution: {
+        initialCapital: '10000',
+        matching: { marketFillPolicy: 'close' },
+        slippage: { model: 'zero' },
+        fee: { model: 'zero' },
+      },
+      risk: {
+        rules: [
+          {
+            ruleId: 'max-positions',
+            type: 'max-position',
+            enabled: true,
+            priority: 1,
+            params: { maxPositions: 5 },
+          },
+        ],
+      },
+    };
+    
+    if (!overrides) {
+      return base;
+    }
+    
+    return {
+      ...base,
+      ...overrides,
+      data: {
+        ...base.data,
+        ...overrides.data,
+        source: {
+          ...base.data.source,
+          ...overrides.data?.source,
+        },
+        timeframe: {
+          ...base.data.timeframe,
+          ...overrides.data?.timeframe,
+        },
+      },
+      strategy: {
+        ...base.strategy,
+        ...overrides.strategy,
+      },
+      execution: {
+        ...base.execution,
+        ...overrides.execution,
+        matching: {
+          ...base.execution.matching,
+          ...overrides.execution?.matching,
+        },
+        slippage: {
+          ...base.execution.slippage,
+          ...overrides.execution?.slippage,
+        },
+        fee: {
+          ...base.execution.fee,
+          ...overrides.execution?.fee,
+        },
+      },
+      risk: {
+        ...base.risk,
+        ...overrides.risk,
+      },
+    };
+  };
   
   beforeEach(() => {
     const moduleCoordinator = createModuleCoordinator();
@@ -199,33 +255,7 @@ describe('Orchestrator Integration Tests', () => {
     });
     
     it('应该在会话销毁时删除快照', async () => {
-      const config: BacktestSessionConfig = {
-        sessionId: 'snapshot-cleanup-test',
-        data: {
-          source: 'parquet',
-          basePath: '/data',
-          symbol: 'BTCUSDT',
-          startTime: '2024-01-01',
-          endTime: '2024-01-31',
-        },
-        strategy: {
-          strategyId: 'test-strategy',
-          version: '1.0.0',
-          name: 'Test Strategy',
-          description: 'Test strategy',
-          scriptPath: '/path/to/strategy.js',
-        },
-        execution: {
-          initialCapital: 10000,
-          leverage: 1,
-          slippageModel: { type: 'fixed', value: 0.001 },
-          feeModel: {
-            type: 'percentage',
-            makerFee: 0.001,
-            takerFee: 0.002,
-          },
-        },
-      };
+      const config = createConfig('snapshot-cleanup-test');
       
       await orchestrator.createSession(config);
       
@@ -246,33 +276,7 @@ describe('Orchestrator Integration Tests', () => {
    */
   describe('事件监听', () => {
     it('应该正确发布会话事件', async () => {
-      const config: BacktestSessionConfig = {
-        sessionId: 'event-test',
-        data: {
-          source: 'parquet',
-          basePath: '/data',
-          symbol: 'BTCUSDT',
-          startTime: '2024-01-01',
-          endTime: '2024-01-31',
-        },
-        strategy: {
-          strategyId: 'test-strategy',
-          version: '1.0.0',
-          name: 'Test Strategy',
-          description: 'Test strategy',
-          scriptPath: '/path/to/strategy.js',
-        },
-        execution: {
-          initialCapital: 10000,
-          leverage: 1,
-          slippageModel: { type: 'fixed', value: 0.001 },
-          feeModel: {
-            type: 'percentage',
-            makerFee: 0.001,
-            takerFee: 0.002,
-          },
-        },
-      };
+      const config = createConfig('event-test');
       
       const session = await orchestrator.createSession(config);
       
@@ -280,7 +284,8 @@ describe('Orchestrator Integration Tests', () => {
       
       // 监听所有事件
       session.on(SessionEventType.StateChanged, (event) => {
-        events.push(`StateChanged:${event.newState}`);
+        const data = event.data as StateChangedEventData | undefined;
+        events.push(`StateChanged:${data?.currentState}`);
       });
       
       session.on(SessionEventType.Started, () => {
@@ -320,33 +325,9 @@ describe('Orchestrator Integration Tests', () => {
    */
   describe('错误处理', () => {
     it('应该正确处理无效配置', async () => {
-      const invalidConfig = {
-        sessionId: '',  // 无效的会话ID
-        data: {
-          source: 'parquet' as const,
-          basePath: '/data',
-          symbol: 'BTCUSDT',
-          startTime: '2024-01-01',
-          endTime: '2024-01-31',
-        },
-        strategy: {
-          strategyId: 'test-strategy',
-          version: '1.0.0',
-          name: 'Test Strategy',
-          description: 'Test strategy',
-          scriptPath: '/path/to/strategy.js',
-        },
-        execution: {
-          initialCapital: 10000,
-          leverage: 1,
-          slippageModel: { type: 'fixed' as const, value: 0.001 },
-          feeModel: {
-            type: 'percentage' as const,
-            makerFee: 0.001,
-            takerFee: 0.002,
-          },
-        },
-      };
+      const invalidConfig = createConfig('invalid-config', {
+        sessionId: '', // 无效的会话ID
+      });
       
       await expect(
         orchestrator.createSession(invalidConfig)
@@ -354,33 +335,7 @@ describe('Orchestrator Integration Tests', () => {
     });
     
     it('应该正确处理状态转换错误', async () => {
-      const config: BacktestSessionConfig = {
-        sessionId: 'error-test',
-        data: {
-          source: 'parquet',
-          basePath: '/data',
-          symbol: 'BTCUSDT',
-          startTime: '2024-01-01',
-          endTime: '2024-01-31',
-        },
-        strategy: {
-          strategyId: 'test-strategy',
-          version: '1.0.0',
-          name: 'Test Strategy',
-          description: 'Test strategy',
-          scriptPath: '/path/to/strategy.js',
-        },
-        execution: {
-          initialCapital: 10000,
-          leverage: 1,
-          slippageModel: { type: 'fixed', value: 0.001 },
-          feeModel: {
-            type: 'percentage',
-            makerFee: 0.001,
-            takerFee: 0.002,
-          },
-        },
-      };
+      const config = createConfig('error-test');
       
       await orchestrator.createSession(config);
       
@@ -398,43 +353,12 @@ describe('Orchestrator Integration Tests', () => {
    */
   describe('性能测试', () => {
     it('应该能够快速创建和销毁大量会话', async () => {
-      const baseConfig: BacktestSessionConfig = {
-        sessionId: 'perf-test-1',
-        data: {
-          source: 'parquet',
-          basePath: '/data',
-          symbol: 'BTCUSDT',
-          startTime: '2024-01-01',
-          endTime: '2024-01-31',
-        },
-        strategy: {
-          strategyId: 'test-strategy',
-          version: '1.0.0',
-          name: 'Test Strategy',
-          description: 'Test strategy',
-          scriptPath: '/path/to/strategy.js',
-        },
-        execution: {
-          initialCapital: 10000,
-          leverage: 1,
-          slippageModel: { type: 'fixed', value: 0.001 },
-          feeModel: {
-            type: 'percentage',
-            makerFee: 0.001,
-            takerFee: 0.002,
-          },
-        },
-      };
-      
       const count = 10;
       const startTime = Date.now();
       
       // 创建多个会话
       for (let i = 0; i < count; i++) {
-        await orchestrator.createSession({
-          ...baseConfig,
-          sessionId: `perf-test-${i}`,
-        });
+        await orchestrator.createSession(createConfig(`perf-test-${i}`));
       }
       
       const createTime = Date.now() - startTime;

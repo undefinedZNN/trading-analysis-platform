@@ -64,6 +64,7 @@ export const ALLOWED_STATE_TRANSITIONS: Record<SessionState, SessionState[]> = {
     SessionState.Stopped,
     SessionState.Completed,
     SessionState.Failed,
+    SessionState.Destroyed,
   ],
   [SessionState.Paused]: [
     SessionState.Running,

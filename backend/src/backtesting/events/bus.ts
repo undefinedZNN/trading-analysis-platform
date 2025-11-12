@@ -9,8 +9,8 @@
  * 5. 死信队列派发
  */
 
-import { BehaviorSubject, Observable, Subject, Subscription } from 'rxjs';
-import { catchError, filter, share, takeUntil, tap } from 'rxjs/operators';
+import { BehaviorSubject, Observable, Subject, Subscription, from } from 'rxjs';
+import { catchError, concatMap, filter, share, takeUntil, tap } from 'rxjs/operators';
 import type {
   EventBus as IEventBus,
   BaseEvent,
@@ -26,6 +26,7 @@ import type {
   SerializedError,
 } from './interfaces';
 import { BusStateMachine } from './state-machine';
+import type { StoredCheckpointMeta } from './store';
 
 /**
  * 为兼容当前 EventStore 实现与规划中的接口，这里只声明实际需要的方法。
@@ -33,7 +34,7 @@ import { BusStateMachine } from './state-machine';
 type EventStoreLike = {
   append(event: BaseEvent | RecordedEvent): Promise<void> | void;
   clear?: () => Promise<void> | void;
-  checkpoint?: (id: string) => Promise<void> | void;
+  checkpoint?: (id: string) => Promise<void | StoredCheckpointMeta> | void | StoredCheckpointMeta;
 };
 
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
@@ -113,8 +114,6 @@ export class EventBus implements IEventBus {
     this.state$ = this.stateSubject.asObservable();
     this.deadLetter$ = this.deadLetterSubject.asObservable();
     this.metrics$ = this.metricsSubject.asObservable();
-
-    this.setupControlHandler();
   }
 
   /**
@@ -146,20 +145,6 @@ export class EventBus implements IEventBus {
       takeUntil(this.destroySubject),
       share()
     );
-  }
-
-  /**
-   * 控制事件处理入口
-   */
-  private setupControlHandler(): void {
-    this.control$.subscribe({
-      next: (controlEvent) => {
-        this.handleControlEvent(controlEvent);
-      },
-      error: (error) => {
-        console.error('[EventBus] Control handler error:', error);
-      },
-    });
   }
 
   /**
@@ -247,21 +232,13 @@ export class EventBus implements IEventBus {
     }
 
     const handler = handlerOrOptions as (event: BaseEvent<T>) => void | Promise<void>;
-    return stream$.subscribe({
-      next: (event) => {
-        try {
-          const result = handler(event);
-          if (this.isPromise(result)) {
-            result.catch((error) => this.handleEventError(error, event));
-          }
-        } catch (error) {
-          this.handleEventError(error, event);
-        }
-      },
-      error: (error) => {
-        this.handleSubscriptionError(error);
-      },
-    });
+    return stream$
+      .pipe(concatMap((event) => from(this.invokeHandler(handler, event))))
+      .subscribe({
+        error: (error) => {
+          this.handleSubscriptionError(error);
+        },
+      });
   }
 
   /**
@@ -272,6 +249,7 @@ export class EventBus implements IEventBus {
       ...event,
       sessionId: event.sessionId ?? this.sessionId,
     };
+    this.handleControlEvent(enriched);
     this.controlSubject.next(enriched);
   }
 
@@ -279,8 +257,9 @@ export class EventBus implements IEventBus {
    * 启动总线
    */
   start(): void {
-    const transitioned =
-      this.tryTransition('initializing') || this.tryTransition('running');
+    const initializing = this.tryTransition('initializing');
+    const running = this.tryTransition('running');
+    const transitioned = initializing || running;
 
     if (transitioned) {
       this.startTime = Date.now();
@@ -313,8 +292,9 @@ export class EventBus implements IEventBus {
    * 停止总线
    */
   stop(): void {
-    const transitioned =
-      this.tryTransition('stopping') || this.tryTransition('stopped');
+    const stopping = this.tryTransition('stopping');
+    const stopped = this.tryTransition('stopped');
+    const transitioned = stopping || stopped;
 
     if (transitioned) {
       this.emitControl('STOP');
@@ -554,6 +534,17 @@ export class EventBus implements IEventBus {
       ...this.currentState,
       ...patch,
     });
+  }
+
+  private async invokeHandler<T>(
+    handler: (event: BaseEvent<T>) => void | Promise<void>,
+    event: BaseEvent<T>
+  ): Promise<void> {
+    try {
+      await handler(event);
+    } catch (error) {
+      this.handleEventError(error, event);
+    }
   }
 
   private normalizeEvent<T>(event: BaseEvent<T>): BaseEvent<T> {

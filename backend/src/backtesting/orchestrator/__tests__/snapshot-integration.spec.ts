@@ -275,7 +275,7 @@ describe('Snapshot System Integration Tests', () => {
       
       const result = await failingCoordinator.createCoordinatedSnapshot('failing-session');
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Pause failed');
+      expect(result.error).toContain('Failed to pause EventBus');
     });
   });
   

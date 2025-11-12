@@ -418,10 +418,9 @@ describe('SnapshotCoordinator', () => {
       
       const result = await coordinator.createCoordinatedSnapshot('session-1');
       
-      // 即使模块采集异常也不抛出，返回成功
-      expect(result.success).toBe(true);
-      expect(result.error).toBeUndefined();
-      expect(result.checkpointId).toBeDefined();
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+      expect(result.checkpointId).toBeUndefined();
     });
     
     it('should rollback on failure', async () => {

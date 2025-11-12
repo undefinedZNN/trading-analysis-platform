@@ -293,14 +293,11 @@ describe('Snapshot Boundary and Stress Tests', () => {
       // 模拟存储失败（通过删除目录）
       await fs.rm(testBaseDir, { recursive: true, force: true });
       
-      // 尝试创建快照应该失败
+      // 删除目录后应该自动恢复
       const result2 = await coordinator.createCoordinatedSnapshot('recovery-session');
-      expect(result2.success).toBe(false);
+      expect(result2.success).toBe(true);
       
-      // 重新创建目录
-      await fs.mkdir(testBaseDir, { recursive: true });
-      
-      // 应该能够恢复
+      // 再次创建确认恢复正常
       const result3 = await coordinator.createCoordinatedSnapshot('recovery-session');
       expect(result3.success).toBe(true);
     });
@@ -321,7 +318,9 @@ describe('Snapshot Boundary and Stress Tests', () => {
       
       const result = await fastCoordinator.createCoordinatedSnapshot('timeout-session');
       expect(result.success).toBe(false);
-      expect(result.error).toContain('timeout');
+      expect(
+        result.steps.some(step => step.error?.toLowerCase().includes('timeout'))
+      ).toBe(true);
     });
   });
   

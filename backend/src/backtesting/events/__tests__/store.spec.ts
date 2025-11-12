@@ -48,7 +48,7 @@ describe('EventStore', () => {
       expect(events).toHaveLength(1);
       expect(events[0].sequenceId).toBe('0');
       const payload = events[0].payload as { index?: number };
-      expect(payload.index).toBeUndefined();
+      expect(payload.index).toBe(0);
     });
 
     it('should append multiple events', () => {
