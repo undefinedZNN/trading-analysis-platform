@@ -35,7 +35,7 @@ export class StrategiesService {
     private readonly scriptVersionRepository: Repository<ScriptVersionEntity>,
     private readonly scriptParser: StrategyScriptParser,
     private readonly scriptValidator: StrategyScriptValidator,
-  ) {}
+  ) { }
 
   async listStrategies(query: ListStrategiesDto) {
     const page = query.page ?? DEFAULT_PAGE;
@@ -233,7 +233,7 @@ export class StrategiesService {
     dto: CreateScriptVersionDto,
   ) {
     await this.assertStrategyExists(strategyId);
-
+    console.log('createScriptVersion==========', 1);
     const strategyVersions =
       await this.scriptVersionRepository.find({
         where: { strategyId },
@@ -244,16 +244,20 @@ export class StrategiesService {
         },
       });
 
+    console.log('createScriptVersion==========', 2, strategyVersions);
     const existingNames = strategyVersions.map(
       (item) => item.versionName,
     );
+    console.log('createScriptVersion==========', 3, existingNames);
     const versionName =
       dto.versionName?.trim() ||
       generateVersionName(existingNames);
 
+    console.log('createScriptVersion==========', 4, versionName);
     if (existingNames.includes(versionName)) {
       throw new ConflictException('版本号已存在，请更换');
     }
+
 
     const version = await this.createVersionInternal(
       strategyId,
@@ -261,6 +265,7 @@ export class StrategiesService {
       dto.isMaster ?? false,
     );
 
+    console.log('createScriptVersion==========', 5, version);
     if (dto.isMaster) {
       await this.setMasterVersion(strategyId, version.scriptVersionId);
     }
@@ -477,8 +482,8 @@ export class StrategiesService {
       message.type === 'typescript'
         ? 'TypeScript'
         : message.ruleId
-        ? `ESLint(${message.ruleId})`
-        : 'ESLint';
+          ? `ESLint(${message.ruleId})`
+          : 'ESLint';
     const location =
       message.line && message.column
         ? ` [${message.line}:${message.column}]`

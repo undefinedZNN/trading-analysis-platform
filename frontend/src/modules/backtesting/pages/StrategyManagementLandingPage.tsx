@@ -18,7 +18,7 @@ import {
   Button,
   Switch,
 } from 'antd';
-import { CheckCircleOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, ReloadOutlined, SearchOutlined, RocketOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import Editor from '@monaco-editor/react';
@@ -43,6 +43,8 @@ import type {
   StrategyVersionSummary,
 } from '../../../shared/api/backtesting';
 import type { VersionCodeDiffSegment, VersionDiffResponse } from '../../../shared/api/backtesting';
+import { CreateBacktestTaskModal } from '../components/CreateBacktestTaskModal';
+import { listDatasets, type DatasetDto } from '../../../shared/api/tradingData';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -229,6 +231,12 @@ function StrategyManagementLandingPage() {
   const [diffCompareId, setDiffCompareId] = useState<string | undefined>();
   const [strategyModalError, setStrategyModalError] = useState<string | null>(null);
   const [versionModalError, setVersionModalError] = useState<string | null>(null);
+  
+  // 创建回测任务相关状态
+  const [createTaskModalOpen, setCreateTaskModalOpen] = useState(false);
+  const [selectedStrategyForTask, setSelectedStrategyForTask] = useState<string | undefined>();
+  const [datasets, setDatasets] = useState<DatasetDto[]>([]);
+  const [loadingDatasets, setLoadingDatasets] = useState(false);
 
   const [form] = Form.useForm<{ keyword?: string; tags?: string[] }>();
   const [createForm] = Form.useForm<{
@@ -292,6 +300,24 @@ function StrategyManagementLandingPage() {
     void loadStrategies(1, pagination.pageSize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 加载数据集列表
+  const loadDatasets = useCallback(async () => {
+    try {
+      setLoadingDatasets(true);
+      const response = await listDatasets({ pageSize: 100 });  // 使用合理的限制
+      setDatasets(response.items);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载数据集失败';
+      message.warning(msg);
+    } finally {
+      setLoadingDatasets(false);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    void loadDatasets();
+  }, [loadDatasets]);
 
   const handleSearch = async () => {
     await loadStrategies(1, pagination.pageSize);
@@ -413,6 +439,18 @@ function StrategyManagementLandingPage() {
         key: 'actions',
         render: (_, record) => (
           <Space size={8}>
+            <Button
+              type="primary"
+              size="small"
+              icon={<RocketOutlined />}
+              onClick={() => {
+                setSelectedStrategyForTask(record.strategyId);
+                setCreateTaskModalOpen(true);
+              }}
+              disabled={!record.masterVersion}
+            >
+              开始回测
+            </Button>
             <Button
               size="small"
               onClick={() => void handleEditStrategy(record.strategyId)}
@@ -1048,14 +1086,27 @@ function StrategyManagementLandingPage() {
               <Typography.Title level={5} style={{ marginBottom: 0 }}>
                 脚本版本
               </Typography.Title>
-              <Button
-                type="primary"
-                onClick={() =>
-                  openVersionModal(strategyDetail.strategyId, 'create')
-                }
-              >
-                新建脚本版本
-              </Button>
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<RocketOutlined />}
+                  onClick={() => {
+                    setSelectedStrategyForTask(strategyDetail.strategyId);
+                    setCreateTaskModalOpen(true);
+                  }}
+                  disabled={!strategyDetail.masterVersion}
+                >
+                  创建回测任务
+                </Button>
+                <Button
+                  type="primary"
+                  onClick={() =>
+                    openVersionModal(strategyDetail.strategyId, 'create')
+                  }
+                >
+                  新建脚本版本
+                </Button>
+              </Space>
             </Space>
             {strategyDetail.scriptVersions.length ? (
               <Table<StrategyVersionSummary>
@@ -1390,6 +1441,30 @@ function StrategyManagementLandingPage() {
           </Space>
         )}
       </Modal>
+
+      {/* 创建回测任务模态框 */}
+      <CreateBacktestTaskModal
+        open={createTaskModalOpen}
+        onCancel={() => {
+          setCreateTaskModalOpen(false);
+          setSelectedStrategyForTask(undefined);
+        }}
+        onSuccess={() => {
+          setCreateTaskModalOpen(false);
+          setSelectedStrategyForTask(undefined);
+          message.success('回测任务创建成功！');
+        }}
+        strategyId={selectedStrategyForTask}
+        datasets={datasets.map((d) => ({
+          datasetId: d.datasetId,
+          name: `${d.source || ''}-${d.tradingPair}-${d.granularity}`.trim(),
+          tradingPair: d.tradingPair,
+          granularity: d.granularity,
+          timeStart: d.timeStart,
+          timeEnd: d.timeEnd,
+          rowCount: d.rowCount,
+        }))}
+      />
     </Space>
   );
 }
