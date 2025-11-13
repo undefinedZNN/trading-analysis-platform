@@ -11,6 +11,7 @@ import {
   HttpStatus,
   ParseUUIDPipe,
   ValidationPipe,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -27,6 +28,7 @@ import {
 } from '@nestjs/swagger';
 import { BacktestTasksService } from './backtest-tasks.service';
 import { TaskLogsService } from './task-logs.service';
+import { TaskExecutorService } from './task-executor.service';
 import {
   CreateBacktestTaskDto,
   UpdateBacktestTaskDto,
@@ -43,9 +45,12 @@ import { BacktestTaskEntity, TaskLogEntity } from './entities';
 @ApiTags('Backtest Tasks')
 @Controller('backtesting/tasks')
 export class BacktestTasksController {
+  private readonly logger = new Logger(BacktestTasksController.name);
+
   constructor(
     private readonly backtestTasksService: BacktestTasksService,
     private readonly taskLogsService: TaskLogsService,
+    private readonly taskExecutorService: TaskExecutorService,
   ) {}
 
   /**
@@ -418,6 +423,66 @@ export class BacktestTasksController {
     error: number;
   }> {
     return await this.taskLogsService.countByLevel(taskId);
+  }
+
+  /**
+   * 手动执行任务
+   */
+  @Post(':taskId/execute')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '手动执行任务',
+    description: '手动触发 pending 状态的任务开始执行。任务将异步执行，不阻塞响应。',
+  })
+  @ApiParam({
+    name: 'taskId',
+    description: '任务ID',
+    type: 'string',
+    example: '770e8400-e29b-41d4-a716-446655440002',
+  })
+  @ApiOkResponse({
+    description: '任务开始执行',
+    schema: {
+      example: {
+        message: 'Task execution started',
+        taskId: '770e8400-e29b-41d4-a716-446655440002',
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: '任务状态不允许执行',
+    schema: {
+      example: {
+        message: 'Task is not in pending status (current: running)',
+        error: 'Bad Request',
+        statusCode: 400,
+      },
+    },
+  })
+  @ApiNotFoundResponse({
+    description: '任务不存在',
+    schema: {
+      example: {
+        message: 'Task not found',
+        error: 'Not Found',
+        statusCode: 404,
+      },
+    },
+  })
+  async executeTask(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+  ): Promise<{ message: string; taskId: string }> {
+    this.logger.log(`Received request to execute task: ${taskId}`);
+    
+    // 异步执行，不等待完成
+    this.taskExecutorService.executeTask(taskId).catch((error) => {
+      this.logger.error(`Task execution failed: ${error.message}`, error.stack);
+    });
+    
+    return {
+      message: 'Task execution started',
+      taskId,
+    };
   }
 }
 

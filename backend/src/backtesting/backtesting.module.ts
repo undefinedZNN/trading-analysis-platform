@@ -27,6 +27,7 @@ import { BacktestTasksModule } from './tasks/backtest-tasks.module';
     StrategiesService,
     StrategyScriptParser,
     StrategyScriptValidator,
+    BacktestTasksModule, // 导出模块以便 TaskExecutor 可以使用 StrategiesService
   ],
 })
 export class BacktestingModule {}

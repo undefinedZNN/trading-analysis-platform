@@ -50,13 +50,187 @@ const { Title, Paragraph, Text } = Typography;
 
 const DATE_FORMAT = 'YYYY-MM-DD HH:mm';
 type StrategyVersionDiff = VersionDiffResponse;
-const DEFAULT_SCRIPT_TEMPLATE = `import { defineStrategy } from '@platform/backtesting-sdk';
+const DEFAULT_SCRIPT_TEMPLATE = `/**
+ * 双均线交叉策略 (MA Cross Strategy)
+ * 
+ * 策略逻辑:
+ * - 当快速均线上穿慢速均线时，产生买入信号（金叉）
+ * - 当快速均线下穿慢速均线时，产生卖出信号（死叉）
+ * 
+ * 这是最经典的趋势跟踪策略之一，适合用于学习和参考
+ */
 
+import { defineStrategy } from '@platform/backtesting-sdk';
+
+/**
+ * 策略参数接口定义
+ */
+interface StrategyParams {
+  fastPeriod: number;
+  slowPeriod: number;
+  positionSize: number;
+}
+
+/**
+ * 策略状态接口定义
+ */
+interface StrategyState {
+  position: 'none' | 'long';
+  entryPrice: number | null;
+  lastFastMA: number | null;
+  lastSlowMA: number | null;
+}
+
+/**
+ * 主策略定义
+ */
 export default defineStrategy({
-  parameters: [],
-  factors: [],
-  run(ctx) {
-    // TODO: implement strategy logic
+  // 参数定义
+  parameters: [
+    {
+      id: 'fastPeriod',
+      label: '快速均线周期',
+      type: 'integer',
+      defaultValue: 10,
+      required: true,
+      validator: {
+        min: 2,
+        max: 100,
+      },
+    },
+    {
+      id: 'slowPeriod',
+      label: '慢速均线周期',
+      type: 'integer',
+      defaultValue: 30,
+      required: true,
+      validator: {
+        min: 5,
+        max: 200,
+      },
+    },
+    {
+      id: 'positionSize',
+      label: '仓位大小',
+      desc: '占总资金比例',
+      type: 'number',
+      defaultValue: 0.5,
+      required: true,
+      validator: {
+        min: 0.1,
+        max: 1.0,
+      },
+    },
+  ],
+
+  // 因子定义（技术指标）
+  factors: [
+    {
+      id: 'fast_ma',
+      label: '快速均线',
+      type: 'MA',
+      params: {
+        period: 10,
+      },
+    },
+    {
+      id: 'slow_ma',
+      label: '慢速均线',
+      type: 'MA',
+      params: {
+        period: 30,
+      },
+    },
+  ],
+
+  // 策略核心逻辑
+  run(ctx: any): void {
+    // 获取参数
+    const params = ctx.getParameters() as StrategyParams;
+
+    // 初始化状态
+    let state: StrategyState = ctx.getState() || {
+      position: 'none',
+      entryPrice: null,
+      lastFastMA: null,
+      lastSlowMA: null,
+    };
+
+    // 获取当前K线数据
+    const bar = ctx.getCurrentBar();
+    if (!bar) return;
+
+    const close = parseFloat(bar.close);
+    const fastMA = ctx.getFactorValue('fast_ma') as number | null;
+    const slowMA = ctx.getFactorValue('slow_ma') as number | null;
+
+    // 检查指标是否可用
+    if (fastMA === null || slowMA === null) {
+      return;
+    }
+
+    // 检测均线交叉
+    let crossover: 'golden' | 'death' | 'none' = 'none';
+
+    if (state.lastFastMA !== null && state.lastSlowMA !== null) {
+      // 金叉：快线从下方穿越慢线
+      if (state.lastFastMA <= state.lastSlowMA && fastMA > slowMA) {
+        crossover = 'golden';
+      }
+      // 死叉：快线从上方穿越慢线
+      else if (state.lastFastMA >= state.lastSlowMA && fastMA < slowMA) {
+        crossover = 'death';
+      }
+    }
+
+    // 记录指标数据
+    ctx.recordMetrics({
+      fast_ma: fastMA,
+      slow_ma: slowMA,
+      crossover: crossover,
+      position: state.position,
+    });
+
+    // 生成交易信号
+    if (crossover === 'golden' && state.position !== 'long') {
+      // 金叉：买入
+      const equity = ctx.getEquity();
+      const positionValue = equity * params.positionSize;
+      const quantity = positionValue / close;
+
+      ctx.log('info', \`Golden Cross - Buy Signal at \${close.toFixed(2)}\`);
+
+      ctx.submitOrder({
+        type: 'market',
+        side: 'buy',
+        quantity: quantity.toFixed(8),
+        reason: 'golden_cross',
+      });
+
+      state.position = 'long';
+      state.entryPrice = close;
+    } else if (crossover === 'death' && state.position === 'long') {
+      // 死叉：卖出
+      if (state.entryPrice) {
+        const pnl = ((close - state.entryPrice) / state.entryPrice) * 100;
+        ctx.log('info', \`Death Cross - Sell Signal at \${close.toFixed(2)}, PnL: \${pnl.toFixed(2)}%\`);
+      }
+
+      ctx.submitOrder({
+        type: 'market',
+        side: 'sell',
+        quantity: 'all',
+        reason: 'death_cross',
+      });
+
+      state.position = 'none';
+      state.entryPrice = null;
+    }
+
+    // 更新状态
+    state.lastFastMA = fastMA;
+    state.lastSlowMA = slowMA;
+    ctx.setState(state);
   },
 });
 `;
