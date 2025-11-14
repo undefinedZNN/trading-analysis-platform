@@ -8,6 +8,7 @@ import {
 import { BaseAuditEntity } from '../../common/entities/base-audit.entity';
 import { ImportTaskEntity } from './import-task.entity';
 import { DatasetBatchEntity } from './dataset-batch.entity';
+import { DatasetAggregationEntity } from './dataset-aggregation.entity';
 
 const bigIntTransformer = {
   to: (value?: number | null) => value ?? null,
@@ -113,4 +114,7 @@ export class DatasetEntity extends BaseAuditEntity {
 
   @OneToMany(() => DatasetBatchEntity, (batch) => batch.dataset)
   batches?: DatasetBatchEntity[];
+
+  @OneToMany(() => DatasetAggregationEntity, (aggregation) => aggregation.dataset)
+  aggregations?: DatasetAggregationEntity[];
 }
