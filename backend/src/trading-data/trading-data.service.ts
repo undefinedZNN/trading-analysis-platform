@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -11,6 +12,10 @@ import { join, posix as posixPath } from 'path';
 import type { Express } from 'express';
 import * as duckdb from 'duckdb';
 import { DatasetEntity } from './entities/dataset.entity';
+import {
+  DatasetAggregationEntity,
+  AggregationStatus,
+} from './entities/dataset-aggregation.entity';
 import {
   ImportStatus,
   ImportTaskEntity,
@@ -42,6 +47,8 @@ const MAX_LABEL_COUNT = 20;
 
 @Injectable()
 export class TradingDataService {
+  private readonly logger = new Logger(TradingDataService.name);
+
   constructor(
     @InjectRepository(DatasetEntity)
     private readonly datasetsRepository: Repository<DatasetEntity>,
@@ -642,9 +649,10 @@ export class TradingDataService {
       volume: number;
     }>;
   }> {
+    const startedAt = Date.now();
     const dataset = await this.datasetsRepository.findOne({
       where: { datasetId },
-      relations: ['batches'],
+      relations: ['batches', 'aggregations'],
     });
     if (!dataset) {
       throw new NotFoundException(`Dataset ${datasetId} not found`);
@@ -690,46 +698,70 @@ export class TradingDataService {
       throw new BadRequestException('开始时间需早于结束时间');
     }
 
-    const relevantBatches = (dataset.batches ?? [])
-      .filter((batch) => {
-        const batchStart = new Date(batch.timeStart).getTime();
-        const batchEnd = new Date(batch.timeEnd).getTime();
-        return batchEnd >= fromDate.getTime() && batchStart <= toDate.getTime();
-      })
-      .sort(
-        (a, b) =>
-          new Date(a.timeStart).getTime() - new Date(b.timeStart).getTime(),
+    const matchedAggregation = this.findMatchingAggregation(
+      dataset,
+      resolution,
+      fromDate,
+      toDate,
+    );
+
+    let rows: any[] = [];
+    let source: 'aggregation' | 'raw' = 'raw';
+
+    if (matchedAggregation) {
+      rows = await this.queryCandlesFromAggregation({
+        aggregation: matchedAggregation,
+        from: fromDate,
+        to: toDate,
+        intervalSeconds,
+        limit,
+      });
+      source = 'aggregation';
+    } else {
+      const relevantBatches = (dataset.batches ?? [])
+        .filter((batch) => {
+          const batchStart = new Date(batch.timeStart).getTime();
+          const batchEnd = new Date(batch.timeEnd).getTime();
+          return (
+            batchEnd >= fromDate.getTime() && batchStart <= toDate.getTime()
+          );
+        })
+        .sort(
+          (a, b) =>
+            new Date(a.timeStart).getTime() - new Date(b.timeStart).getTime(),
+        );
+
+      let paths = relevantBatches.map((batch) =>
+        resolveDatasetPath(batch.path),
       );
 
-    let paths = relevantBatches.map((batch) => resolveDatasetPath(batch.path));
-
-    if (!paths.length) {
-      if (dataset.path && dataset.path.endsWith('.parquet')) {
+      if (!paths.length && dataset.path?.endsWith('.parquet')) {
         paths = [resolveDatasetPath(dataset.path)];
       }
+
+      if (!paths.length) {
+        throw new BadRequestException('当前数据集暂无可用的批次文件');
+      }
+
+      rows = await this.queryCandles({
+        paths,
+        from: fromDate,
+        to: toDate,
+        intervalSeconds,
+        baseIntervalSeconds,
+        limit,
+      });
     }
 
-    if (!paths.length) {
-      throw new BadRequestException('当前数据集暂无可用的批次文件');
-    }
-
-    const rows = await this.queryCandles({
-      paths,
-      from: fromDate,
-      to: toDate,
-      intervalSeconds,
-      baseIntervalSeconds,
-      limit,
+    const candles = this.mapRowsToCandles(rows);
+    const duration = Date.now() - startedAt;
+    this.logQueryMetrics({
+      datasetId: dataset.datasetId,
+      resolution,
+      source,
+      durationMs: duration,
+      rowCount: candles.length,
     });
-
-    const candles = rows.map((row: any) => ({
-      time: Math.floor(Number(row.time)),
-      open: Number(row.open),
-      high: Number(row.high),
-      low: Number(row.low),
-      close: Number(row.close),
-      volume: Number(row.volume ?? 0),
-    }));
 
     return {
       datasetId: dataset.datasetId,
@@ -829,6 +861,75 @@ export class TradingDataService {
     return normalized;
   }
 
+  private findMatchingAggregation(
+    dataset: DatasetEntity,
+    resolution: string,
+    from: Date,
+    to: Date,
+  ): DatasetAggregationEntity | null {
+    return (
+      dataset.aggregations?.find(
+        (aggregation) =>
+          aggregation.targetGranularity === resolution &&
+          aggregation.status === AggregationStatus.Completed &&
+          aggregation.timeStart.getTime() <= from.getTime() &&
+          aggregation.timeEnd.getTime() >= to.getTime(),
+      ) ?? null
+    );
+  }
+
+  private async queryCandlesFromAggregation(params: {
+    aggregation: DatasetAggregationEntity;
+    from: Date;
+    to: Date;
+    intervalSeconds: number;
+    limit: number;
+  }): Promise<any[]> {
+    const { aggregation, from, to, intervalSeconds, limit } = params;
+    const aggregationIntervalSeconds = this.parseResolutionToSeconds(
+      aggregation.targetGranularity,
+    );
+
+    return this.queryCandles({
+      paths: [resolveDatasetPath(aggregation.path)],
+      from,
+      to,
+      intervalSeconds,
+      baseIntervalSeconds: aggregationIntervalSeconds,
+      limit,
+    });
+  }
+
+  private mapRowsToCandles(rows: any[]): Array<{
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }> {
+    return rows.map((row: any) => ({
+      time: Math.floor(Number(row.time)),
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      volume: Number(row.volume ?? 0),
+    }));
+  }
+
+  private logQueryMetrics(params: {
+    datasetId: number;
+    resolution: string;
+    source: 'aggregation' | 'raw';
+    durationMs: number;
+    rowCount: number;
+  }): void {
+    this.logger.debug(
+      `[CandlesQuery] dataset=${params.datasetId} resolution=${params.resolution} source=${params.source} rows=${params.rowCount} duration=${params.durationMs}ms`,
+    );
+  }
+
   private secondsToDate(value: number): Date {
     const date = new Date(value * 1000);
     if (Number.isNaN(date.getTime())) {
@@ -842,7 +943,7 @@ export class TradingDataService {
       throw new BadRequestException('缺少时间粒度参数');
     }
     const normalized = resolution.trim().toLowerCase();
-    const match = normalized.match(/^(\d+)([smhd])$/);
+    const match = normalized.match(/^(\d+)([smhdwM])$/);
     if (!match) {
       throw new BadRequestException(`不支持的时间粒度格式: ${resolution}`);
     }
@@ -853,6 +954,8 @@ export class TradingDataService {
       m: 60,
       h: 3600,
       d: 86400,
+      w: 604800,
+      M: 2592000,
     };
     const unitSeconds = unitMap[unit];
     if (!unitSeconds) {

@@ -25,6 +25,7 @@ import type { DatasetDto } from '../../../shared/api/tradingData';
 import EditDatasetModal from '../components/EditDatasetModal';
 import AppendDatasetModal from '../components/AppendDatasetModal';
 import DatasetChartDrawer from '../components/DatasetChartDrawer';
+import AggregationManagerDrawer from '../components/AggregationManagerDrawer';
 import { MoreOutlined } from '@ant-design/icons';
 
 type DatasetListPageProps = {
@@ -41,6 +42,8 @@ export function DatasetListPage({ onUpdated }: DatasetListPageProps) {
   const [appendDatasetTarget, setAppendDatasetTarget] = useState<DatasetDto | null>(null);
   const [chartDataset, setChartDataset] = useState<DatasetDto | null>(null);
   const [chartOpen, setChartOpen] = useState(false);
+  const [aggregationDataset, setAggregationDataset] = useState<DatasetDto | null>(null);
+  const [aggregationDrawerOpen, setAggregationDrawerOpen] = useState(false);
   const [filters, setFilters] = useState<ListDatasetsQuery>({ status: 'active' });
   const [form] = Form.useForm();
 
@@ -279,6 +282,15 @@ export function DatasetListPage({ onUpdated }: DatasetListPageProps) {
               >
                 查看图表
               </Button>
+              <Button
+                size="small"
+                onClick={() => {
+                  setAggregationDataset(record);
+                  setAggregationDrawerOpen(true);
+                }}
+              >
+                聚合管理
+              </Button>
               <Dropdown
                 menu={{ items: menuItems }}
                 trigger={['click']}
@@ -396,6 +408,14 @@ export function DatasetListPage({ onUpdated }: DatasetListPageProps) {
         onClose={() => {
           setChartOpen(false);
           setChartDataset(null);
+        }}
+      />
+      <AggregationManagerDrawer
+        open={aggregationDrawerOpen}
+        dataset={aggregationDataset}
+        onClose={() => {
+          setAggregationDrawerOpen(false);
+          setAggregationDataset(null);
         }}
       />
     </Card>

@@ -16,6 +16,9 @@ import { DatasetBatchEntity } from '../entities/dataset-batch.entity';
 import { Repository, DeepPartial } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as duckdb from 'duckdb';
+import { DataAggregationService } from './data-aggregation.service';
+import { TriggerType } from '../entities/aggregation-task.entity';
+import { shouldAutoAggregateOnImport } from '../../config/aggregation.config';
 
 type ProcessSummary = {
   timeStart: Date;
@@ -36,6 +39,7 @@ export class ImportProcessingService {
     private readonly datasetRepository: Repository<DatasetEntity>,
     @InjectRepository(DatasetBatchEntity)
     private readonly datasetBatchRepository: Repository<DatasetBatchEntity>,
+    private readonly aggregationService: DataAggregationService,
   ) {
     pluginRegistry.register(new CsvOhlcvPlugin());
   }
@@ -156,6 +160,8 @@ export class ImportProcessingService {
       finishedAt: new Date(),
       metadata: metadata ?? null,
     });
+
+    await this.triggerAutoAggregations(dataset.datasetId, importTask);
   }
 
   private async handleAppendImport(
@@ -199,6 +205,34 @@ export class ImportProcessingService {
       finishedAt: new Date(),
       metadata: metadata ?? null,
     });
+
+    await this.triggerAutoAggregations(dataset.datasetId, importTask);
+  }
+
+  private async triggerAutoAggregations(
+    datasetId: number,
+    importTask: ImportTaskEntity,
+  ): Promise<void> {
+    if (!shouldAutoAggregateOnImport()) {
+      return;
+    }
+
+    try {
+      await this.aggregationService.createAggregationTasks(
+        datasetId,
+        undefined,
+        TriggerType.Auto,
+        importTask.createdBy ?? undefined,
+      );
+      this.logger.log(
+        `导入任务 #${importTask.importId} 触发数据集 #${datasetId} 自动聚合`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `自动触发聚合失败（dataset=${datasetId}）: ${error instanceof Error ? error.message : error}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
   }
 
   private buildDatasetRootFromMetadata(

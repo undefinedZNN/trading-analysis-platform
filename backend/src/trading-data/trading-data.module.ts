@@ -8,7 +8,9 @@ import { AggregationTaskEntity } from './entities/aggregation-task.entity';
 import { TradingDataService } from './trading-data.service';
 import { DatasetsController } from './controllers/datasets.controller';
 import { ImportsController } from './controllers/imports.controller';
+import { AggregationsController } from './controllers/aggregations.controller';
 import { ImportProcessingService } from './services/import-processing.service';
+import { DataAggregationService } from './services/data-aggregation.service';
 
 @Module({
   imports: [
@@ -20,8 +22,8 @@ import { ImportProcessingService } from './services/import-processing.service';
       AggregationTaskEntity,
     ]),
   ],
-  providers: [TradingDataService, ImportProcessingService],
-  controllers: [DatasetsController, ImportsController],
-  exports: [TradingDataService],
+  providers: [TradingDataService, ImportProcessingService, DataAggregationService],
+  controllers: [DatasetsController, ImportsController, AggregationsController],
+  exports: [TradingDataService, DataAggregationService],
 })
 export class TradingDataModule {}

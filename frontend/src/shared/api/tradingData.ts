@@ -52,6 +52,39 @@ export interface DatasetDto {
   updatedAt: string;
 }
 
+export interface DatasetAggregationDto {
+  aggregationId: number;
+  datasetId: number;
+  sourceGranularity: string;
+  targetGranularity: string;
+  path: string;
+  timeStart: string;
+  timeEnd: string;
+  rowCount: number;
+  checksum: string;
+  status: string;
+  progress: number;
+  errorLog?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AggregationTaskDto {
+  taskId: number;
+  aggregationId?: number | null;
+  datasetId: number;
+  targetGranularity: string;
+  triggerType: string;
+  triggeredBy?: string | null;
+  status: string;
+  progress: number;
+  message?: string | null;
+  errorLog?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  createdAt: string;
+}
+
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;
@@ -192,5 +225,38 @@ export async function fetchDatasetCandles(
   const { data } = await client.get<DatasetCandlesResponse>(`/datasets/${datasetId}/candles`, {
     params,
   });
+  return data;
+}
+
+export async function fetchDatasetAggregations(
+  datasetId: number,
+  params: { status?: string } = {},
+) {
+  const { data } = await client.get<{ items: DatasetAggregationDto[]; total: number }>(
+    `/datasets/${datasetId}/aggregations`,
+    { params },
+  );
+  return data.items;
+}
+
+export async function fetchDatasetAggregationTasks(
+  datasetId: number,
+  params: { status?: string } = {},
+) {
+  const { data } = await client.get<{ items: AggregationTaskDto[]; total: number }>(
+    `/datasets/${datasetId}/aggregations/tasks`,
+    { params },
+  );
+  return data.items;
+}
+
+export async function triggerDatasetAggregations(
+  datasetId: number,
+  payload: { granularities?: string[]; triggeredBy?: string },
+) {
+  const { data } = await client.post(
+    `/datasets/${datasetId}/aggregations`,
+    payload,
+  );
   return data;
 }
