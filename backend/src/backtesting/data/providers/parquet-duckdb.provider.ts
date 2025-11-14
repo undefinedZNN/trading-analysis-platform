@@ -21,6 +21,7 @@ import { DefaultDuckDBQueryBuilder } from './query-builder';
 import { DefaultGapDetector } from './gap-detector';
 import { DefaultGapFiller } from './gap-filler';
 import { timeframeToMs } from '../timeframe/time-alignment';
+import { DataSizeChecker } from './data-size-checker';
 
 /**
  * Parquet+DuckDB 数据提供者实现
@@ -33,6 +34,7 @@ export class ParquetDuckDBProvider implements DataProvider {
   private queryBuilder: DefaultDuckDBQueryBuilder;
   private gapDetector: DefaultGapDetector;
   private gapFiller: DefaultGapFiller;
+  private dataSizeChecker: DataSizeChecker;
   private config: DataSourceConfig;
 
   constructor(config: Partial<DataSourceConfig> = {}) {
@@ -52,6 +54,10 @@ export class ParquetDuckDBProvider implements DataProvider {
     this.queryBuilder = new DefaultDuckDBQueryBuilder(this.config.storageBasePath);
     this.gapDetector = new DefaultGapDetector();
     this.gapFiller = new DefaultGapFiller();
+    this.dataSizeChecker = new DataSizeChecker({
+      warnThresholdMB: 2048,  // 2GB 警告
+      blockThresholdMB: 10240, // 10GB 阻断
+    });
   }
 
   /**
@@ -97,15 +103,45 @@ export class ParquetDuckDBProvider implements DataProvider {
    * 提取数据
    */
   fetch(request: FetchRequest): Observable<BarEvent> {
-    // 应用默认配置
+    // 预检数据规模
+    const sizeEstimate = this.dataSizeChecker.estimate({
+      symbol: request.symbol,
+      start: request.start,
+      end: request.end,
+      baseTimeframe: request.baseTimeframe,
+    });
+    
+    // 打印估算信息
+    console.log(`[DataProvider] ${sizeEstimate.message}`);
+    
+    // 如果数据集过大，抛出错误
+    if (sizeEstimate.shouldBlock) {
+      return new Observable(observer => {
+        observer.error(new Error(
+          `Data set too large (estimated ${sizeEstimate.estimatedMemoryMB} MB). ` +
+          `Please reduce time range or use a larger timeframe. ` +
+          `Current: ${request.start} to ${request.end} at ${request.baseTimeframe}`
+        ));
+      });
+    }
+    
+    // 应用默认配置，如果有警告则使用推荐配置
     const finalRequest: FetchRequest = {
       ...request,
-      batchSize: request.batchSize || this.config.defaultBatchSize,
+      batchSize: sizeEstimate.shouldWarn 
+        ? (request.batchSize || sizeEstimate.recommendedBatchSize)
+        : (request.batchSize || this.config.defaultBatchSize),
       overlapSize: request.overlapSize || this.config.defaultOverlapSize,
-      maxConcurrent: request.maxConcurrent || this.config.defaultMaxConcurrent,
+      maxConcurrent: sizeEstimate.shouldWarn
+        ? (request.maxConcurrent || sizeEstimate.recommendedMaxConcurrent)
+        : (request.maxConcurrent || this.config.defaultMaxConcurrent),
       gapPolicy: request.gapPolicy || this.config.defaultGapPolicy,
       fillMethod: request.fillMethod || this.config.defaultFillMethod,
     };
+    
+    if (sizeEstimate.shouldWarn) {
+      console.log(`[DataProvider] Using optimized config: batchSize=${finalRequest.batchSize}, maxConcurrent=${finalRequest.maxConcurrent}`);
+    }
 
     return new Observable(observer => {
       this.initConnection()

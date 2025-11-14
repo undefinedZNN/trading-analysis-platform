@@ -190,7 +190,8 @@ export class DefaultDuckDBQueryBuilder implements DuckDBQueryBuilder {
   private buildFieldList(
     fields: Array<'open' | 'high' | 'low' | 'close' | 'volume' | 'trades' | 'notional' | string> | undefined
   ): string {
-    // 默认字段
+    // 默认字段 - 只包含必需字段
+    // trades 和 notional 是可选的，如果需要应该在 fields 参数中明确指定
     const defaultFields = [
       'timestamp',
       'open',
@@ -198,8 +199,6 @@ export class DefaultDuckDBQueryBuilder implements DuckDBQueryBuilder {
       'low',
       'close',
       'volume',
-      'trades',
-      'notional',
     ];
 
     if (!fields || fields.length === 0) {
