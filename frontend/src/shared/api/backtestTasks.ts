@@ -277,6 +277,14 @@ export async function retryBacktestTask(taskId: string): Promise<BacktestTask> {
 }
 
 /**
+ * 手动执行任务
+ */
+export async function executeBacktestTask(taskId: string): Promise<{ message: string; taskId: string }> {
+  const { data } = await client.post<{ message: string; taskId: string }>(`/${taskId}/execute`);
+  return data;
+}
+
+/**
  * 复制任务配置
  */
 export async function copyBacktestTaskConfig(
@@ -313,4 +321,3 @@ export async function fetchTaskLogStats(taskId: string): Promise<TaskLogStats> {
   const { data } = await client.get<TaskLogStats>(`/${taskId}/logs/stats`);
   return data;
 }
-

@@ -37,6 +37,13 @@ const { Search } = Input;
  */
 export const BacktestTaskListPage: React.FC = () => {
   const navigate = useNavigate();
+  const logEvent = (message: string, payload?: unknown) => {
+    if (payload !== undefined) {
+      console.info(`[BacktestTasks] ${message}`, payload);
+    } else {
+      console.info(`[BacktestTasks] ${message}`);
+    }
+  };
   
   // 状态管理
   const [tasks, setTasks] = useState<BacktestTask[]>([]);
@@ -64,6 +71,14 @@ export const BacktestTaskListPage: React.FC = () => {
   const loadTasks = async () => {
     try {
       setLoading(true);
+      logEvent('开始加载任务列表', {
+        keyword,
+        statusFilter,
+        sortBy,
+        sortOrder,
+        page,
+        pageSize,
+      });
       const response = await listBacktestTasks({
         keyword: keyword || undefined,
         status: statusFilter,
@@ -75,7 +90,12 @@ export const BacktestTaskListPage: React.FC = () => {
       
       setTasks(response.tasks);
       setTotal(response.total);
+      logEvent('任务列表加载完成', {
+        count: response.tasks.length,
+        total: response.total,
+      });
     } catch (error: any) {
+      console.error('[BacktestTasks] 加载任务列表失败', error);
       message.error('加载任务列表失败: ' + error.message);
     } finally {
       setLoading(false);
@@ -88,9 +108,12 @@ export const BacktestTaskListPage: React.FC = () => {
   const loadDatasets = async () => {
     try {
       setLoadingDatasets(true);
+      logEvent('开始加载数据集列表');
       const response = await listDatasets({ pageSize: 100 });  // 使用合理的限制
       setDatasets(response.items);
+      logEvent('数据集列表加载完成', { count: response.items.length });
     } catch (error: any) {
+      console.error('[BacktestTasks] 加载数据集列表失败', error);
       message.error('加载数据集列表失败: ' + error.message);
     } finally {
       setLoadingDatasets(false);
@@ -116,6 +139,7 @@ export const BacktestTaskListPage: React.FC = () => {
    * 搜索
    */
   const handleSearch = () => {
+    logEvent('执行任务搜索', { keyword });
     setPage(1); // 重置到第一页
     loadTasks();
   };
@@ -124,6 +148,7 @@ export const BacktestTaskListPage: React.FC = () => {
    * 重置筛选
    */
   const handleReset = () => {
+    logEvent('重置任务筛选条件');
     setKeyword('');
     setStatusFilter(undefined);
     setSortBy(SortField.CREATED_AT);
@@ -135,6 +160,7 @@ export const BacktestTaskListPage: React.FC = () => {
    * 查看任务详情
    */
   const handleViewTask = (taskId: string) => {
+    logEvent('跳转查看任务详情', { taskId });
     navigate(`/backtesting/tasks/${taskId}`);
   };
 
@@ -142,6 +168,7 @@ export const BacktestTaskListPage: React.FC = () => {
    * 创建任务成功后的回调
    */
   const handleCreateSuccess = () => {
+    logEvent('任务创建成功刷新列表');
     setCreateModalOpen(false);
     setPage(1);
     loadTasks();
@@ -330,4 +357,3 @@ export const BacktestTaskListPage: React.FC = () => {
 };
 
 export default BacktestTaskListPage;
-

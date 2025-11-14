@@ -159,13 +159,16 @@ export class DefaultDuckDBQueryBuilder implements DuckDBQueryBuilder {
   /**
    * 构建 Parquet 文件路径
    * 
-   * 路径格式: storage/datasets/{symbol}/{market}/{timeframe}/*.parquet
-   * 如果没有 market，则为: storage/datasets/{symbol}/{timeframe}/*.parquet
+   * 路径格式: storage/datasets/{symbol}/{market}/{timeframe}/**\/\*.parquet
+   * 如果没有 market，则为: storage/datasets/{symbol}/{timeframe}/**\/\*.parquet
+   * 
+   * 使用递归通配符来匹配子目录中的 Parquet 文件
+   * （例如：dt=2022-12-15/hour=00/batch_15.parquet）
    * 
    * @param symbol 标的代码
    * @param market 市场（可选）
    * @param timeframe 时间框架
-   * @returns Parquet 文件路径（通配符）
+   * @returns Parquet 文件路径（递归通配符）
    */
   private buildParquetPath(
     symbol: string,
@@ -173,9 +176,9 @@ export class DefaultDuckDBQueryBuilder implements DuckDBQueryBuilder {
     timeframe: Timeframe
   ): string {
     if (market) {
-      return `${this.storageBasePath}/${symbol}/${market}/${timeframe}/*.parquet`;
+      return `${this.storageBasePath}/${symbol}/${market}/${timeframe}/**/*.parquet`;
     }
-    return `${this.storageBasePath}/${symbol}/${timeframe}/*.parquet`;
+    return `${this.storageBasePath}/${symbol}/${timeframe}/**/*.parquet`;
   }
 
   /**

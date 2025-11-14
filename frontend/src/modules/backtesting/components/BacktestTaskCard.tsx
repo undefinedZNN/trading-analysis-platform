@@ -10,6 +10,8 @@ import {
   ReloadOutlined,
   DeleteOutlined,
   CopyOutlined,
+  CaretRightOutlined,
+  PauseOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
@@ -21,6 +23,7 @@ import {
   cancelBacktestTask,
   retryBacktestTask,
   deleteBacktestTask,
+  executeBacktestTask,
 } from '../../../shared/api/backtestTasks';
 
 dayjs.extend(duration);
@@ -43,6 +46,13 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
   onView,
   onUpdate,
 }) => {
+  const logEvent = (message: string, payload?: unknown) => {
+    if (payload !== undefined) {
+      console.info(`[BacktestTaskCard] ${message}`, payload);
+    } else {
+      console.info(`[BacktestTaskCard] ${message}`);
+    }
+  };
   /**
    * 获取状态标签配置
    */
@@ -90,13 +100,32 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
   /**
    * 取消任务
    */
-  const handleCancel = async () => {
+  const handlePause = async () => {
     try {
+      logEvent('请求暂停任务', { taskId: task.taskId });
       await cancelBacktestTask(task.taskId);
-      message.success('任务已取消');
+      message.success('任务已暂停');
+      logEvent('任务暂停成功', { taskId: task.taskId });
       onUpdate?.();
     } catch (error: any) {
-      message.error('取消任务失败: ' + error.message);
+      console.error('[BacktestTaskCard] 暂停任务失败', error);
+      message.error('暂停任务失败: ' + error.message);
+    }
+  };
+
+  /**
+   * 开始任务
+   */
+  const handleExecute = async () => {
+    try {
+      logEvent('请求开始任务', { taskId: task.taskId });
+      await executeBacktestTask(task.taskId);
+      message.success('任务已开始');
+      logEvent('任务开始成功', { taskId: task.taskId });
+      onUpdate?.();
+    } catch (error: any) {
+      console.error('[BacktestTaskCard] 开始任务失败', error);
+      message.error('开始任务失败: ' + error.message);
     }
   };
 
@@ -105,10 +134,13 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
    */
   const handleRetry = async () => {
     try {
+      logEvent('请求重试任务', { taskId: task.taskId });
       await retryBacktestTask(task.taskId);
       message.success('重试任务已创建');
+      logEvent('任务重试成功', { taskId: task.taskId });
       onUpdate?.();
     } catch (error: any) {
+      console.error('[BacktestTaskCard] 重试任务失败', error);
       message.error('重试任务失败: ' + error.message);
     }
   };
@@ -118,10 +150,13 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
    */
   const handleDelete = async () => {
     try {
+      logEvent('请求删除任务', { taskId: task.taskId });
       await deleteBacktestTask(task.taskId);
       message.success('任务已删除');
+      logEvent('任务删除成功', { taskId: task.taskId });
       onUpdate?.();
     } catch (error: any) {
+      console.error('[BacktestTaskCard] 删除任务失败', error);
       message.error('删除任务失败: ' + error.message);
     }
   };
@@ -283,21 +318,35 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
           查看详情
         </Button>
 
+        {task.status === BacktestTaskStatus.PENDING && (
+          <Tooltip title="开始执行">
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              icon={<CaretRightOutlined />}
+              onClick={handleExecute}
+            >
+              开始
+            </Button>
+          </Tooltip>
+        )}
+
         {task.status === BacktestTaskStatus.RUNNING && (
           <Popconfirm
-            title="确定要取消该任务吗？"
-            description="取消后任务将停止执行"
-            onConfirm={handleCancel}
+            title="确定要暂停该任务吗？"
+            description="暂停后任务将停止执行"
+            onConfirm={handlePause}
             okText="确定"
             cancelText="取消"
           >
-            <Tooltip title="取消任务">
+            <Tooltip title="暂停任务">
               <Button
                 size="small"
                 danger
-                icon={<StopOutlined />}
+                icon={<PauseOutlined />}
               >
-                取消
+                暂停
               </Button>
             </Tooltip>
           </Popconfirm>
@@ -355,4 +404,3 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
 };
 
 export default BacktestTaskCard;
-

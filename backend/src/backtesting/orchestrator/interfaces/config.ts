@@ -39,6 +39,9 @@ export interface DataSourceConfig {
   
   /** 缺口处理策略 */
   gapPolicy?: 'forward-fill' | 'zero-fill' | 'drop' | 'linear-interpolate';
+  
+  /** 数据集的原始时间周期（用于数据加载） */
+  baseGranularity?: string;
 }
 
 /**

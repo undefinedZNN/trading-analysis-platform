@@ -30,9 +30,16 @@ import { SessionEventType, SessionState } from '../interfaces/session';
 import type { BacktestSessionConfig } from '../interfaces/config';
 import type { ServiceContainer } from '../interfaces/container';
 import { DefaultServiceContainer } from '../container/service-container';
+import { ServiceTokens } from '../container/tokens';
+import { ServiceLifetime } from '../interfaces/container';
 import { createSession } from '../session';
 import { mergeConfig } from '../config/merger';
 import { validateConfigOrThrow } from '../config/validator';
+import { createParquetDuckDBProvider } from '../../data/providers';
+import { SimpleEventStore } from '../../events/simple-bus';
+import { SimpleEventBus } from '../../events/simple-bus';
+import { resolveDatasetPath } from '../../../config/storage.config';
+import { dirname, resolve } from 'path';
 
 /**
  * 编排器实现
@@ -393,18 +400,100 @@ export class OrchestratorImpl implements Orchestrator {
   /**
    * 创建服务容器
    * 
-   * 在实际应用中，这里会注册所有必要的服务
-   * 现在返回一个空容器，具体实现在集成测试中
+   * 注册所有必要的服务：DataProvider, EventBus, EventStore 等
    */
   private createServiceContainer(config: BacktestSessionConfig): ServiceContainer {
-    // 这里应该创建并配置 ServiceContainer
-    // 注册所有必要的服务：DataProvider, EventBus, 等等
-    // 为了简化，我们返回一个基本的容器实现
-    
     const container = new DefaultServiceContainer();
     
     // 注册配置
     container.registerInstance('Config', config);
+    container.registerInstance(ServiceTokens.SessionConfig, config);
+    container.registerInstance(ServiceTokens.DataConfig, config.data);
+    container.registerInstance(ServiceTokens.StrategyConfig, config.strategy);
+    container.registerInstance(ServiceTokens.ExecutionConfig, config.execution);
+    container.registerInstance(ServiceTokens.RiskConfig, config.risk);
+    
+    // 注册 EventStore（单例）
+    container.registerFactory(
+      ServiceTokens.EventStore,
+      () => new SimpleEventStore(),
+      ServiceLifetime.Singleton
+    );
+    
+    // 注册 EventBus（单例，依赖 EventStore）
+    container.registerFactory(
+      ServiceTokens.EventBus,
+      (c) => {
+        const store = c.resolve(ServiceTokens.EventStore) as SimpleEventStore;
+        return new SimpleEventBus(store);
+      },
+      ServiceLifetime.Singleton,
+      [ServiceTokens.EventStore]
+    );
+    
+    // 注册 DataProvider（单例）
+    container.registerFactory(
+      ServiceTokens.DataProvider,
+      (c) => {
+        const dataConfig = c.resolve(ServiceTokens.DataConfig) as any;
+        
+        // 从配置中提取 storageBasePath（必须是绝对路径，因为 DuckDB 需要绝对路径）
+        // dataConfig.source.path 是绝对路径，例如：
+        // /Volumes/CODE/trading-analysis-platform/backend/storage/datasets/ES-最新/ES/1s
+        // 数据集路径格式：ES-最新/ES/1s（第一级是数据集名称，第二级是symbol，第三级是timeframe）
+        // buildParquetPath 构建：${storageBasePath}/${symbol}/${timeframe}/*.parquet
+        // 所以 storageBasePath 应该是：/Volumes/CODE/trading-analysis-platform/backend/storage/datasets/ES-最新
+        
+        let storageBasePath: string;
+        
+        if (dataConfig?.source?.path) {
+          const fullPath = dataConfig.source.path;
+          
+          // 如果已经是绝对路径（从 resolveDatasetPath 返回的）
+          if (fullPath.startsWith('/')) {
+            const parts = fullPath.split('/');
+            const datasetsIndex = parts.indexOf('datasets');
+            
+            if (datasetsIndex >= 0) {
+              // 提取到 datasets 目录及其下一级（数据集名称）
+              // 例如：/Volumes/CODE/trading-analysis-platform/backend/storage/datasets/ES-最新/ES/1s
+              // 提取为：/Volumes/CODE/trading-analysis-platform/backend/storage/datasets/ES-最新
+              const baseParts = parts.slice(0, datasetsIndex + 2); // datasets + 下一级
+              storageBasePath = baseParts.join('/');
+            } else {
+              // 没找到 datasets，使用默认值（转换为绝对路径）
+              storageBasePath = resolve(process.cwd(), 'storage/datasets');
+            }
+          } else {
+            // 相对路径，假设是相对于 storage/datasets
+            // 格式：ES-最新/ES/1s，提取第一级作为数据集名称
+            const pathParts = fullPath.split('/');
+            if (pathParts.length >= 1) {
+              storageBasePath = resolve(process.cwd(), 'storage/datasets', pathParts[0]);
+            } else {
+              storageBasePath = resolve(process.cwd(), 'storage/datasets');
+            }
+          }
+        } else {
+          // 使用默认值（转换为绝对路径）
+          storageBasePath = resolve(process.cwd(), 'storage/datasets');
+        }
+        
+        console.log(`[Orchestrator] DataProvider storageBasePath: ${storageBasePath}`);
+        
+        return createParquetDuckDBProvider({
+          storageBasePath,
+          defaultBatchSize: 10000,
+          defaultGapPolicy: 'fill',
+          defaultFillMethod: 'forwardFill',
+        });
+      },
+      ServiceLifetime.Singleton,
+      [ServiceTokens.DataConfig]
+    );
+    
+    // TODO: 注册其他服务（TimeframeAdapter, FeatureRegistry, StrategySandbox, RiskEngine, ExecutionEngine, LedgerService）
+    // 这些服务需要根据实际实现来注册
     
     return container;
   }

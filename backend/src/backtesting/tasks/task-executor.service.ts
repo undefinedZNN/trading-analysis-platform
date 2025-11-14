@@ -5,6 +5,7 @@ import { BacktestTasksService } from './backtest-tasks.service';
 import { TaskLogsService } from './task-logs.service';
 import { StrategiesService } from '../strategies/strategies.service';
 import { TradingDataService } from '../../trading-data/trading-data.service';
+import { resolveDatasetPath } from '../../config/storage.config';
 import { BacktestTaskEntity, BacktestTaskStatus, ResultSummary } from './entities';
 import {
   Orchestrator,
@@ -91,28 +92,37 @@ export class TaskExecutorService {
       // 1. 获取任务
       const task = await this.tasksService.findOne(taskId);
       
-      // 2. 验证状态
-      if (task.status !== BacktestTaskStatus.PENDING) {
+      // 2. 验证状态（允许 pending 和 failed 状态的任务执行，failed 状态可以重试）
+      if (task.status !== BacktestTaskStatus.PENDING && task.status !== BacktestTaskStatus.FAILED) {
         throw new BadRequestException(
-          `Task ${taskId} is not in pending status (current: ${task.status})`
+          `Task ${taskId} cannot be executed in ${task.status} status. Only pending or failed tasks can be executed.`
         );
       }
       
-      // 3. 更新状态为 running
+      // 3. 如果是 failed 状态，先清理之前的错误信息
+      if (task.status === BacktestTaskStatus.FAILED) {
+        await this.taskRepository.update(
+          { taskId },
+          { errorMessage: null, errorStack: null }
+        );
+        await this.logsService.info(taskId, 'TaskExecutor', 'Retrying failed task');
+      }
+      
+      // 4. 更新状态为 running
       await this.tasksService.updateStatus(taskId, BacktestTaskStatus.RUNNING);
       await this.logsService.info(taskId, 'TaskExecutor', 'Task execution started');
       
-      // 4. 准备 Orchestrator 配置
+      // 5. 准备 Orchestrator 配置
       const config = await this.prepareOrchestratorConfig(task);
       
-      // 5. 创建会话
+      // 6. 创建会话
       const session = await this.orchestrator.createSession(config);
       this.activeSessions.set(taskId, session);
       
-      // 6. 订阅事件
+      // 7. 订阅事件
       this.subscribeToEvents(session, taskId);
       
-      // 7. 启动执行
+      // 8. 启动执行
       await this.orchestrator.start(taskId);
       
       this.logger.log(`Task ${taskId} started successfully`);
@@ -241,6 +251,13 @@ export class TaskExecutorService {
         end: dataset.timeEnd.toISOString(),
       };
       
+      // 构建数据集的绝对路径（使用配置中的函数）
+      const datasetAbsolutePath = resolveDatasetPath(dataset.path);
+      
+      this.logger.log(
+        `Dataset path resolved: ${dataset.path} -> ${datasetAbsolutePath}`
+      );
+      
       const config: BacktestSessionConfig = {
         sessionId: task.taskId,
         
@@ -257,11 +274,13 @@ export class TaskExecutorService {
         data: {
           source: {
             provider: 'parquet-duckdb',
-            path: dataset.path, // 从数据集获取实际路径
+            path: datasetAbsolutePath, // 使用绝对路径
             symbols: [dataset.tradingPair], // 从数据集获取交易对
             timeRange: dataTimeRange,
+            baseGranularity: dataset.granularity, // 存储数据集的原始时间周期
           },
           timeframe: {
+            // primary 用于重采样，但数据加载应该使用 baseGranularity
             primary: task.dataConfig?.timeframe || dataset.granularity,
           },
         },
@@ -466,13 +485,19 @@ export class TaskExecutorService {
     this.logger.error(`Task ${taskId} failed: ${error.message}`);
     
     try {
+      // 截断错误消息（数据库字段限制为 50 字符）
+      const MAX_ERROR_MESSAGE_LENGTH = 50;
+      const truncatedErrorMessage = error.message.length > MAX_ERROR_MESSAGE_LENGTH
+        ? error.message.substring(0, MAX_ERROR_MESSAGE_LENGTH - 3) + '...'
+        : error.message;
+      
       // 1. 更新任务状态
       await this.tasksService.updateStatus(taskId, BacktestTaskStatus.FAILED);
       await this.taskRepository.update(
         { taskId },
         {
           completedAt: new Date(),
-          errorMessage: error.message,
+          errorMessage: truncatedErrorMessage,
           errorStack: error.stack,
         }
       );
@@ -499,4 +524,5 @@ export class TaskExecutorService {
     }
   }
 }
+
 

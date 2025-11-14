@@ -34,7 +34,7 @@ describe('DuckDBQueryBuilder', () => {
       
       expect(sql).toContain('SELECT');
       expect(sql).toContain('FROM read_parquet');
-      expect(sql).toContain('storage/datasets/BTC-USDT/1m/*.parquet');
+      expect(sql).toContain('storage/datasets/BTC-USDT/1m/**/*.parquet');
       expect(sql).toContain('WHERE timestamp >=');
       expect(sql).toContain('AND timestamp <');
       expect(sql).toContain('ORDER BY timestamp ASC');
@@ -61,7 +61,7 @@ describe('DuckDBQueryBuilder', () => {
 
       const sql = builder.buildRangeQuery(request, batch);
       
-      expect(sql).toContain('storage/datasets/BTC-USDT/binance/1m/*.parquet');
+      expect(sql).toContain('storage/datasets/BTC-USDT/binance/1m/**/**/*.parquet');
     });
 
     it('should use specified fields', () => {
@@ -139,7 +139,7 @@ describe('DuckDBQueryBuilder', () => {
       expect(sql).toContain('MIN(timestamp) AS start_time');
       expect(sql).toContain('MAX(timestamp) AS end_time');
       expect(sql).toContain('FROM read_parquet');
-      expect(sql).toContain('storage/datasets/BTC-USDT/1m/*.parquet');
+      expect(sql).toContain('storage/datasets/BTC-USDT/1m/**/*.parquet');
     });
   });
 
@@ -295,7 +295,7 @@ describe('DuckDBQueryBuilder', () => {
 
       const sql = customBuilder.buildRangeQuery(request, batch);
       
-      expect(sql).toContain('/custom/path/BTC-USDT/1m/*.parquet');
+      expect(sql).toContain('/custom/path/BTC-USDT/1m/**/*.parquet');
     });
   });
 });

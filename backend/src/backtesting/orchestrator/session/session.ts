@@ -14,10 +14,12 @@ import type {
   SessionEvent,
   SessionEventType,
   StateChangedEventData,
+  ProgressUpdatedEventData,
 } from '../interfaces/session';
 
 import type { BacktestSessionConfig } from '../interfaces/config';
 import type { ServiceContainer } from '../interfaces/container';
+import { ServiceTokens } from '../container/tokens';
 
 import {
   SessionError,
@@ -26,6 +28,9 @@ import {
 
 import { SessionStateMachine } from './session-state-machine';
 import { SessionState as State } from '../interfaces/session';
+import { EventReplay } from '../../events/replay';
+import type { BarEvent } from '../../data/timeframe/interfaces';
+import { lastValueFrom } from 'rxjs';
 
 // ============================================================================
 // 事件发射器类型
@@ -67,6 +72,15 @@ export class DefaultSession implements Session {
     processedEvents: 0,
     errorCount: 0,
   };
+  
+  /** 事件重放器 */
+  private eventReplay: EventReplay | null = null;
+  
+  /** 数据加载订阅 */
+  private dataSubscription: any = null;
+  
+  /** 是否正在执行 */
+  private isExecuting: boolean = false;
   
   /**
    * 构造函数
@@ -123,11 +137,8 @@ export class DefaultSession implements Session {
     this.transitionState(State.Initializing, 'Starting initialization');
     
     try {
-      // TODO: 在这里初始化各个模块
-      // 例如：初始化 DataProvider, EventBus, Strategy, Risk, Execution 等
-      
-      // 模拟初始化延迟
-      await new Promise(resolve => setTimeout(resolve, 10));
+      // 模块已经在 createSession 时通过 moduleCoordinator.initializeModules() 初始化了
+      // 这里只需要启动数据加载和事件重放
       
       // 初始化成功，转换到运行状态
       this.transitionState(State.Running, 'Initialization completed');
@@ -139,6 +150,21 @@ export class DefaultSession implements Session {
         sessionId: this.id,
         timestamp: Date.now(),
       });
+      
+      // 启动数据加载和事件重放（异步执行，不阻塞）
+      this.startExecution().catch((error) => {
+        console.error(`[Session ${this.id}] Execution failed:`, error);
+        this.transitionState(State.Failed, `Execution failed: ${error}`);
+        this._metadata.error = String(error);
+        
+        this.emitEvent({
+          type: 'session.failed' as SessionEventType,
+          sessionId: this.id,
+          timestamp: Date.now(),
+          data: { error: String(error) },
+        });
+      });
+      
     } catch (error) {
       // 初始化失败
       this.transitionState(State.Failed, `Initialization failed: ${error}`);
@@ -151,6 +177,190 @@ export class DefaultSession implements Session {
         data: { error: String(error) },
       });
       
+      throw error;
+    }
+  }
+  
+  /**
+   * 启动执行（数据加载和事件重放）
+   */
+  private async startExecution(): Promise<void> {
+    if (this.isExecuting) {
+      return; // 已经在执行中
+    }
+    
+    this.isExecuting = true;
+    
+    try {
+      // 1. 获取服务
+      const dataProvider = this.container.tryResolve(ServiceTokens.DataProvider) as any;
+      const eventBus = this.container.tryResolve(ServiceTokens.EventBus) as any;
+      const eventStore = this.container.tryResolve(ServiceTokens.EventStore) as any;
+      
+      if (!dataProvider || !eventBus || !eventStore) {
+        throw new Error('Required services not found in container');
+      }
+      
+      // 2. 启动 EventBus
+      if (typeof eventBus.start === 'function') {
+        eventBus.start();
+      }
+      
+      // 3. 从 DataProvider 加载数据并发布到 EventBus
+      const dataConfig = this.config.data;
+      if (!dataConfig?.source) {
+        throw new Error('Data source configuration is missing');
+      }
+      
+      const { source, timeframe } = dataConfig;
+      const symbol = source.symbols?.[0] || 'UNKNOWN';
+      const startTime = source.timeRange?.start || '';
+      const endTime = source.timeRange?.end || '';
+      
+      // 使用数据集的原始 granularity 作为 baseTimeframe
+      // timeframe.primary 可能是重采样后的时间周期（如 5m），但数据加载必须使用原始数据的时间周期（如 1s）
+      // 优先使用 source.baseGranularity，如果没有则从路径推断，最后使用默认值
+      let baseTimeframe = (source as any)?.baseGranularity;
+      
+      if (!baseTimeframe) {
+        // 从路径推断：路径格式为 .../ES-最新/ES/1s，最后一部分是 granularity
+        const pathParts = source.path.split('/');
+        const lastPart = pathParts[pathParts.length - 1];
+        // 检查是否是时间周期格式（如 1s, 5m, 1h）
+        if (lastPart && /^\d+[smhd]$/.test(lastPart)) {
+          baseTimeframe = lastPart;
+        } else {
+          // 如果路径格式不对，使用默认值
+          baseTimeframe = timeframe?.primary || '1m';
+        }
+      }
+      
+      console.log(`[Session ${this.id}] Starting data fetch:`, {
+        symbol,
+        startTime,
+        endTime,
+        baseTimeframe,
+        configuredTimeframe: timeframe?.primary,
+      });
+      
+      // 4. 确保 EventBus 有订阅者（否则事件不会被处理）
+      // 订阅所有事件以确保管道激活
+      const eventSubscription = eventBus.subscribe('market.bar').subscribe(() => {
+        // 事件会被自动处理
+      });
+      
+      // 5. 订阅数据流并发布到 EventBus
+      let processedBars = 0;
+      let lastProgressUpdate = 0;
+      const PROGRESS_UPDATE_INTERVAL = 100; // 每100条更新一次进度
+      
+      const barEvents$ = dataProvider.fetch({
+        symbol,
+        start: startTime,
+        end: endTime,
+        baseTimeframe,
+        gapPolicy: source.gapPolicy || 'fill',
+      });
+      
+      // 订阅数据流
+      this.dataSubscription = barEvents$.subscribe({
+        next: (bar: BarEvent) => {
+          // 将 BarEvent 转换为 EventBus 事件
+          if (typeof eventBus.publish === 'function') {
+            eventBus.publish({
+              type: 'market.bar',
+              eventId: `bar-${bar.sequenceId}`,
+              timestamp: new Date(bar.timestamp).getTime(),
+              sequenceId: bar.sequenceId,
+              payload: {
+                symbol: bar.symbol,
+                timeframe: bar.timeframe,
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                volume: bar.volume,
+                features: bar.features,
+              },
+            });
+          }
+          
+          processedBars++;
+          this.stats.processedEvents++;
+          
+          // 定期发送进度更新（每处理 N 条记录）
+          if (processedBars - lastProgressUpdate >= PROGRESS_UPDATE_INTERVAL) {
+            lastProgressUpdate = processedBars;
+            
+            // 使用线性进度估算（假设数据加载占 90%，剩余 10% 用于处理）
+            // 实际进度会在完成时更新为 100%
+            const estimatedProgress = Math.min(0.90, processedBars / (processedBars + 1000));
+            
+            this.emitEvent({
+              type: 'session.progress-updated' as SessionEventType,
+              sessionId: this.id,
+              timestamp: Date.now(),
+              data: {
+                progress: estimatedProgress,
+                processedEvents: processedBars,
+                totalEvents: undefined,
+                message: `Processed ${processedBars} bars`,
+              } as ProgressUpdatedEventData,
+            });
+          }
+        },
+        error: (error: Error) => {
+          console.error(`[Session ${this.id}] Data loading error:`, error);
+          this.transitionState(State.Failed, `Data loading failed: ${error.message}`);
+          this._metadata.error = error.message;
+          
+          this.emitEvent({
+            type: 'session.failed' as SessionEventType,
+            sessionId: this.id,
+            timestamp: Date.now(),
+            data: { error: error.message },
+          });
+        },
+        complete: () => {
+          console.log(`[Session ${this.id}] Data loading completed, processed ${processedBars} bars`);
+          
+          // 取消事件订阅
+          if (eventSubscription) {
+            eventSubscription.unsubscribe();
+          }
+          
+          // 数据加载完成，等待 EventBus 处理完所有事件
+          setTimeout(() => {
+            // 发送最终进度
+            this.emitEvent({
+              type: 'session.progress-updated' as SessionEventType,
+              sessionId: this.id,
+              timestamp: Date.now(),
+              data: {
+                progress: 1.0,
+                processedEvents: processedBars,
+                totalEvents: processedBars,
+                message: 'Backtest execution completed',
+              } as ProgressUpdatedEventData,
+            });
+            
+            // 标记为完成
+            this.transitionState(State.Completed, 'Backtest execution completed');
+            this._metadata.completedAt = Date.now();
+            
+            this.emitEvent({
+              type: 'session.completed' as SessionEventType,
+              sessionId: this.id,
+              timestamp: Date.now(),
+            });
+            
+            this.isExecuting = false;
+          }, 1000);
+        },
+      });
+      
+    } catch (error) {
+      this.isExecuting = false;
       throw error;
     }
   }
