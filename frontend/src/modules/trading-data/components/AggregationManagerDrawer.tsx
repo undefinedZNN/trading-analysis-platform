@@ -26,6 +26,7 @@ import {
 } from '../../../shared/api/tradingData';
 
 const GRANULARITY_OPTIONS = [
+  { label: '1分钟 (1m)', value: '1m' },
   { label: '5分钟 (5m)', value: '5m' },
   { label: '15分钟 (15m)', value: '15m' },
   { label: '30分钟 (30m)', value: '30m' },

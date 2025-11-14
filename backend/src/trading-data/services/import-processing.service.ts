@@ -130,12 +130,14 @@ export class ImportProcessingService {
     await this.ensureDirectories(batchRelativePath);
     await this.moveOutputFile(summary.outputPath, resolveDatasetPath(batchRelativePath));
 
+    const baseGranularity = metadata?.granularity ?? 'unknown';
     const datasetPayload: DeepPartial<DatasetEntity> = {
       source: metadata?.source ?? null,
       tradingPair:
         metadata?.tradingPair ?? metadata?.symbol ?? 'unknown',
       granularity: metadata?.granularity ?? 'unknown',
       path: datasetRoot,
+      pathTemplate: this.buildDatasetPathTemplate(metadata),
       timeStart: summary.timeStart,
       timeEnd: summary.timeEnd,
       rowCount: summary.rowCount,
@@ -144,13 +146,19 @@ export class ImportProcessingService {
       description: metadata?.description ?? null,
       createdBy: importTask.createdBy,
       updatedBy: importTask.createdBy,
+      availableGranularities: [baseGranularity],
     };
 
     const dataset = await this.datasetRepository.save(
       this.datasetRepository.create(datasetPayload),
     );
 
-    await this.recordDatasetBatch(dataset.datasetId, importTask.importId, batchRelativePath, summary);
+    const batch = await this.recordDatasetBatch(
+      dataset.datasetId,
+      importTask.importId,
+      batchRelativePath,
+      summary,
+    );
 
     await this.importRepository.update(importTask.importId, {
       status: ImportStatus.Completed,
@@ -160,6 +168,14 @@ export class ImportProcessingService {
       finishedAt: new Date(),
       metadata: metadata ?? null,
     });
+
+    await this.aggregationService
+      .updateAggregationsForAppend(dataset.datasetId, batch)
+      .catch((error) => {
+        this.logger.error(
+          `追加数据后更新聚合失败: ${error instanceof Error ? error.message : error}`,
+        );
+      });
 
     await this.triggerAutoAggregations(dataset.datasetId, importTask);
   }
@@ -246,6 +262,16 @@ export class ImportProcessingService {
       metadata?.granularity ?? 'unknown',
     );
     return posixPath.join(source, tradingPair, granularity);
+  }
+
+  private buildDatasetPathTemplate(
+    metadata: ImportMetadataPayload | undefined,
+  ): string {
+    const source = this.normalizePathSegment(metadata?.source ?? 'unknown');
+    const tradingPair = this.normalizePathSegment(
+      (metadata?.tradingPair ?? metadata?.symbol ?? 'unknown').replace('/', '_'),
+    );
+    return posixPath.join(source, tradingPair, '{granularity}');
   }
 
   private buildBatchPath(
@@ -368,7 +394,7 @@ export class ImportProcessingService {
     importId: number,
     path: string,
     summary: ProcessSummary,
-  ): Promise<void> {
+  ): Promise<DatasetBatchEntity> {
     const batchPayload: DeepPartial<DatasetBatchEntity> = {
       datasetId,
       importId,
@@ -378,7 +404,7 @@ export class ImportProcessingService {
       rowCount: summary.rowCount,
       checksum: summary.checksum,
     };
-    await this.datasetBatchRepository.save(
+    return this.datasetBatchRepository.save(
       this.datasetBatchRepository.create(batchPayload),
     );
   }

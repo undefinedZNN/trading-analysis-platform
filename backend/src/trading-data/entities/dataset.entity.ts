@@ -55,6 +55,14 @@ export class DatasetEntity extends BaseAuditEntity {
   path!: string;
 
   @Column({
+    type: 'text',
+    name: 'path_template',
+    nullable: true,
+    comment: '数据集路径模板，例如 source/tradingPair/{granularity}',
+  })
+  pathTemplate?: string | null;
+
+  @Column({
     type: 'timestamptz',
     nullable: false,
     name: 'time_start',
@@ -93,6 +101,15 @@ export class DatasetEntity extends BaseAuditEntity {
     comment: '自定义标签集合，入库前需去重与裁剪',
   })
   labels!: string[];
+
+  @Column({
+    type: 'jsonb',
+    name: 'available_granularities',
+    nullable: false,
+    default: () => "'[]'::jsonb",
+    comment: '当前可用的时间粒度列表（含原始 + 已完成聚合）',
+  })
+  availableGranularities!: string[];
 
   @Column({
     type: 'text',

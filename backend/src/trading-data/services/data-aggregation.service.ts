@@ -7,11 +7,12 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository, FindOptionsWhere } from 'typeorm';
 import { dirname } from 'path';
-import { mkdir } from 'fs/promises';
+import { mkdir, rename, copyFile, unlink } from 'fs/promises';
 import { createReadStream } from 'fs';
 import { createHash } from 'crypto';
 import * as duckdb from 'duckdb';
 import { DatasetEntity } from '../entities/dataset.entity';
+import { DatasetBatchEntity } from '../entities/dataset-batch.entity';
 import {
   DatasetAggregationEntity,
   AggregationStatus,
@@ -448,6 +449,154 @@ export class DataAggregationService {
     });
   }
 
+  async updateAggregationsForAppend(
+    datasetId: number,
+    newBatch: DatasetBatchEntity,
+  ): Promise<void> {
+    const aggregations = await this.aggregationRepository.find({
+      where: {
+        datasetId,
+        status: AggregationStatus.Completed,
+      },
+    });
+
+    if (!aggregations.length) {
+      this.logger.debug(
+        `Dataset ${datasetId} 没有已完成的聚合，跳过增量更新`,
+      );
+      return;
+    }
+
+    for (const aggregation of aggregations) {
+      try {
+        await this.appendAggregation(aggregation, newBatch);
+      } catch (error) {
+        this.logger.error(
+          `增量更新聚合 #${aggregation.aggregationId} 失败: ${error instanceof Error ? error.message : error}`,
+        );
+        await this.aggregationRepository.update(aggregation.aggregationId, {
+          status: AggregationStatus.Failed,
+          errorLog: error instanceof Error ? error.stack : String(error),
+        });
+      }
+    }
+  }
+
+  private async appendAggregation(
+    aggregation: DatasetAggregationEntity,
+    newBatch: DatasetBatchEntity,
+  ): Promise<void> {
+    const appendRelativePath = `${aggregation.path}.append-${newBatch.datasetBatchId}-${Date.now()}.parquet`;
+    await this.aggregateBatchToTempFile(aggregation, newBatch, appendRelativePath);
+    await this.mergeParquetFiles(aggregation.path, appendRelativePath);
+
+    const stats = await this.readParquetStats(aggregation.path);
+    await this.aggregationRepository.update(aggregation.aggregationId, {
+      timeStart: stats.timeStart,
+      timeEnd: stats.timeEnd,
+      rowCount: stats.rowCount,
+      checksum: await this.computeFileChecksum(
+        resolveDatasetPath(aggregation.path),
+      ),
+      status: AggregationStatus.Completed,
+      progress: 100,
+    });
+  }
+
+  private async aggregateBatchToTempFile(
+    aggregation: DatasetAggregationEntity,
+    batch: DatasetBatchEntity,
+    tempRelativePath: string,
+  ): Promise<void> {
+    const config: AggregationQueryConfig = {
+      sourceGranularity: aggregation.sourceGranularity,
+      targetGranularity: aggregation.targetGranularity,
+      sourcePaths: [resolveDatasetPath(batch.path)],
+      outputPath: resolveDatasetPath(tempRelativePath),
+      timeStart: batch.timeStart,
+      timeEnd: batch.timeEnd,
+    };
+    await mkdir(dirname(config.outputPath), { recursive: true });
+    await this.executeDuckDbAggregation(config);
+  }
+
+  private async mergeParquetFiles(
+    targetRelativePath: string,
+    appendRelativePath: string,
+  ): Promise<void> {
+    const targetPath = resolveDatasetPath(targetRelativePath);
+    const appendPath = resolveDatasetPath(appendRelativePath);
+    const mergedTemp = `${targetPath}.merged-${Date.now()}.parquet`;
+    const db = new duckdb.Database(':memory:');
+    const connection = db.connect();
+    try {
+      const mergeSql = `
+        COPY (
+          SELECT * FROM read_parquet('${this.escapeSqlLiteral(targetPath)}')
+          UNION ALL
+          SELECT * FROM read_parquet('${this.escapeSqlLiteral(appendPath)}')
+          ORDER BY timestamp
+        )
+        TO '${this.escapeSqlLiteral(mergedTemp)}'
+        (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 100000)
+      `;
+      await this.execDuckDb(connection, mergeSql);
+    } finally {
+      connection.close();
+      db.close();
+    }
+
+    await this.replaceFile(mergedTemp, targetPath);
+    await unlink(appendPath).catch(() => undefined);
+  }
+
+  private async readParquetStats(
+    relativePath: string,
+  ): Promise<{ rowCount: number; timeStart: Date; timeEnd: Date }> {
+    const absolute = resolveDatasetPath(relativePath);
+    const db = new duckdb.Database(':memory:');
+    const connection = db.connect();
+    try {
+      const sql = `
+        SELECT
+          COUNT(*) AS row_count,
+          MIN(timestamp) AS time_start,
+          MAX(timestamp) AS time_end
+        FROM read_parquet('${this.escapeSqlLiteral(absolute)}')
+      `;
+      return await new Promise((resolve, reject) => {
+        connection.all(sql, (err, rows: any[]) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          const row = rows[0];
+          resolve({
+            rowCount: Number(row?.row_count ?? 0),
+            timeStart: row?.time_start ? new Date(row.time_start) : new Date(0),
+            timeEnd: row?.time_end ? new Date(row.time_end) : new Date(0),
+          });
+        });
+      });
+    } finally {
+      connection.close();
+      db.close();
+    }
+  }
+
+  private async replaceFile(source: string, target: string): Promise<void> {
+    try {
+      await rename(source, target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EXDEV') {
+        await copyFile(source, target);
+        await unlink(source);
+      } else {
+        throw error;
+      }
+    }
+  }
+
   async listAggregations(
     datasetId: number,
     status: AggregationStatus | 'all' = 'all',
@@ -499,9 +648,12 @@ export class DataAggregationService {
     dataset: DatasetEntity,
     targetGranularity: string,
   ): string {
-    const source = dataset.source || 'unknown';
-    const pair = dataset.tradingPair.replace(/[\\/]/g, '_');
-    return `${source}/${pair}/${targetGranularity}/agg_${targetGranularity}_from_${dataset.granularity}.parquet`;
+    const template = dataset.pathTemplate;
+    const basePath =
+      template && template.includes('{granularity}')
+        ? template.replace('{granularity}', targetGranularity)
+        : `${dataset.source || 'unknown'}/${dataset.tradingPair.replace(/[\\/]/g, '_')}/${targetGranularity}`;
+    return `${basePath}/agg_${targetGranularity}_from_${dataset.granularity}.parquet`;
   }
 
   /**
@@ -509,6 +661,27 @@ export class DataAggregationService {
    */
   protected escapeSqlLiteral(value: string): string {
     return value.replace(/'/g, "''");
+  }
+
+  private async ensureDatasetGranularity(
+    datasetId: number,
+    granularity: string,
+  ): Promise<void> {
+    const dataset = await this.datasetRepository.findOne({
+      where: { datasetId },
+    });
+    if (!dataset) {
+      return;
+    }
+    const set = new Set(dataset.availableGranularities ?? []);
+    set.add(dataset.granularity);
+    if (set.has(granularity)) {
+      return;
+    }
+    set.add(granularity);
+    await this.datasetRepository.update(datasetId, {
+      availableGranularities: Array.from(set),
+    });
   }
 
   /**
@@ -573,6 +746,8 @@ export class DataAggregationService {
         finishedAt: new Date(),
         message: `完成 ${summary.rowCount} 条记录聚合`,
       });
+
+      await this.ensureDatasetGranularity(task.datasetId, task.targetGranularity);
 
       logger.log(`聚合任务 ${taskId} 完成`);
     } catch (error: any) {

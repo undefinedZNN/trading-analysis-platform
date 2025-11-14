@@ -92,15 +92,17 @@ describe('DataAggregationService', () => {
 
   describe('createAggregationTasks', () => {
     it('creates tasks for valid granularities and dispatches them', async () => {
-      const dataset: DatasetEntity = {
-        datasetId: 1,
-        granularity: '1m',
-        tradingPair: 'BTC/USDT',
-        path: 'source/btc/1m',
-        checksum: 'abc',
-        labels: [],
-        timeStart: new Date('2024-01-01T00:00:00Z'),
-        timeEnd: new Date('2024-01-01T02:00:00Z'),
+    const dataset: DatasetEntity = {
+      datasetId: 1,
+      granularity: '1m',
+      tradingPair: 'BTC/USDT',
+      path: 'source/btc/1m',
+      pathTemplate: 'source/btc/{granularity}',
+      checksum: 'abc',
+      labels: [],
+      availableGranularities: ['1m'],
+      timeStart: new Date('2024-01-01T00:00:00Z'),
+      timeEnd: new Date('2024-01-01T02:00:00Z'),
         rowCount: 1000,
         source: 'exchange',
         description: null,

@@ -41,11 +41,13 @@ export interface DatasetDto {
   tradingPair: string;
   granularity: string;
   path: string;
+  pathTemplate?: string | null;
   timeStart: string;
   timeEnd: string;
   rowCount: number;
   checksum: string;
   labels: string[];
+  availableGranularities?: string[];
   description?: string | null;
   deletedAt?: string | null;
   createdAt: string;

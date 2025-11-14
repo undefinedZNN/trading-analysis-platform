@@ -66,7 +66,11 @@ const createRepoMock = <T>(): RepoMock<T> => ({
   exist: jest.fn(),
 });
 
-async function createSampleBatchParquet(relativePath: string, rows: number): Promise<void> {
+async function createSampleBatchParquet(
+  relativePath: string,
+  rows: number,
+  startTime = '2024-01-01 00:00:00',
+): Promise<void> {
   const absolute = resolve(tempDatasetsRoot, relativePath);
   await mkdir(dirname(absolute), { recursive: true });
   const db = new duckdb.Database(':memory:');
@@ -74,7 +78,7 @@ async function createSampleBatchParquet(relativePath: string, rows: number): Pro
   const createSql = `
     CREATE TABLE candles AS
     SELECT
-      TIMESTAMP '2024-01-01 00:00:00' + i * INTERVAL 1 MINUTE AS timestamp,
+      TIMESTAMP '${startTime}' + i * INTERVAL 1 MINUTE AS timestamp,
       100 + i AS open,
       100 + i + 1 AS high,
       100 + i - 1 AS low,
@@ -86,6 +90,27 @@ async function createSampleBatchParquet(relativePath: string, rows: number): Pro
   await exec(connection, `COPY candles TO '${absolute}' (FORMAT PARQUET);`);
   connection.close();
   db.close();
+}
+
+async function readParquetRowCount(relativePath: string): Promise<number> {
+  const absolute = resolve(tempDatasetsRoot, relativePath);
+  const db = new duckdb.Database(':memory:');
+  const connection = db.connect();
+  try {
+    const sql = `SELECT COUNT(*) AS row_count FROM read_parquet('${absolute}')`;
+    return await new Promise((resolvePromise, reject) => {
+      connection.all(sql, (err, rows: any[]) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolvePromise(Number(rows[0]?.row_count ?? 0));
+      });
+    });
+  } finally {
+    connection.close();
+    db.close();
+  }
 }
 
 function exec(connection: duckdb.Connection, sql: string): Promise<void> {
@@ -116,11 +141,13 @@ describe('DataAggregationService integration', () => {
       tradingPair: 'BTC/USDT',
       granularity: '1m',
       path: 'exchange/BTC_USDT/1m',
+      pathTemplate: 'exchange/BTC_USDT/{granularity}',
       timeStart: new Date('2024-01-01T00:00:00Z'),
       timeEnd: new Date('2024-01-01T04:00:00Z'),
       rowCount: 1000,
       checksum: 'abc',
       labels: [],
+      availableGranularities: ['1m'],
       description: null,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -160,6 +187,16 @@ describe('DataAggregationService integration', () => {
         return savedAggregation;
       }
       return null;
+    });
+    aggregationRepo.find.mockImplementation(async ({ where }) => {
+      if (
+        savedAggregation &&
+        where?.datasetId === savedAggregation.datasetId &&
+        (!where?.status || where.status === savedAggregation.status)
+      ) {
+        return [savedAggregation];
+      }
+      return [];
     });
     aggregationRepo.create.mockImplementation((payload) => ({
       ...payload,
@@ -210,6 +247,7 @@ describe('DataAggregationService integration', () => {
       taskRepo,
       getAggregation: () => savedAggregation,
       getLatestTask: () => savedTasks[savedTasks.length - 1],
+      dataset,
     };
   }
 
@@ -260,5 +298,53 @@ describe('DataAggregationService integration', () => {
     expect(duration).toBeLessThan(5000); // <5s target for sample dataset
     const aggregation = repos.getAggregation();
     expect(aggregation?.status).toBe(AggregationStatus.Completed);
+  });
+
+  it('updates aggregations when new batch is appended', async () => {
+    const initialBatchPath =
+      'exchange/BTC_USDT/1m/dt=2024-01-03/hour=00/batch.parquet';
+    await createSampleBatchParquet(initialBatchPath, 120);
+    const repos = setupRepositories(initialBatchPath);
+    const service = new TestAggregationService(
+      repos.datasetRepo as any,
+      repos.aggregationRepo as any,
+      repos.taskRepo as any,
+    );
+
+    await service.createAggregationTasks(1, ['5m'], TriggerType.Manual, 'tester');
+    await service.flushQueuedTasks();
+
+    const initialAggregation = repos.getAggregation();
+    expect(initialAggregation?.rowCount).toBeGreaterThan(0);
+    const initialRowCount = await readParquetRowCount(initialAggregation!.path);
+
+    const newBatchPath =
+      'exchange/BTC_USDT/1m/dt=2024-01-03/hour=04/batch.parquet';
+    await createSampleBatchParquet(newBatchPath, 60, '2024-01-03 04:00:00');
+
+    const batchStart = new Date('2024-01-03T04:00:00Z');
+    const batchEnd = new Date('2024-01-03T05:00:00Z');
+    const newBatch: DatasetBatchEntity = {
+      datasetBatchId: 99,
+      datasetId: repos.dataset.datasetId,
+      importId: 2,
+      path: newBatchPath,
+      timeStart: batchStart,
+      timeEnd: batchEnd,
+      rowCount: 60,
+      checksum: 'new',
+      createdAt: new Date(),
+      dataset: undefined as any,
+      importTask: undefined as any,
+    };
+
+    const perfStart = Date.now();
+    await service.updateAggregationsForAppend(repos.dataset.datasetId, newBatch);
+    const appendDuration = Date.now() - perfStart;
+    expect(appendDuration).toBeLessThan(2000);
+
+    const updatedAggregation = repos.getAggregation();
+    const finalRowCount = await readParquetRowCount(updatedAggregation!.path);
+    expect(finalRowCount).toBeGreaterThan(initialRowCount);
   });
 });
