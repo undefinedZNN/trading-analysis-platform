@@ -63,187 +63,258 @@ trading-analysis-platform/
 
 ### 1. Worker 服务实现
 
-#### 服务器入口（server.ts）
+#### 技术栈对齐（main.ts + worker.module.ts）
 ```typescript
-// backtest-worker/src/server.ts
-import express from 'express';
-import { BacktestExecutor } from './executor/executor';
-import { WorkerRegistration } from './registration';
+// backtest-worker/src/main.ts
+import { NestFactory } from '@nestjs/core';
+import { WorkerModule } from './worker.module';
+import { ConfigService } from '@nestjs/config';
 
-const app = express();
-app.use(express.json());
+async function bootstrap() {
+  const app = await NestFactory.create(WorkerModule, { bufferLogs: true });
+  app.enableShutdownHooks();
 
-const config = {
-  workerId: process.env.WORKER_ID || `worker-${process.pid}`,
-  port: parseInt(process.env.PORT || '3001'),
-  mainServiceUrl: process.env.MAIN_SERVICE_URL || 'http://localhost:3000',
-};
+  const config = app.get(ConfigService);
+  const port = config.get<number>('worker.server.port', 3001);
 
-const executor = new BacktestExecutor(config);
-const registration = new WorkerRegistration(config);
-
-// 健康检查
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    workerId: config.workerId,
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    tasksRunning: executor.getRunningTaskCount(),
-  });
-});
-
-// 执行回测任务
-app.post('/execute', async (req, res) => {
-  const { taskId, config: taskConfig } = req.body;
-  
-  try {
-    // 立即返回，异步执行
-    res.status(202).json({
-      taskId,
-      status: 'accepted',
-      workerId: config.workerId,
-    });
-    
-    // 异步执行
-    executor.execute(taskId, taskConfig).catch(error => {
-      console.error(`Task ${taskId} failed:`, error);
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 取消任务
-app.post('/tasks/:taskId/cancel', async (req, res) => {
-  const { taskId } = req.params;
-  
-  await executor.cancel(taskId);
-  
-  res.json({
-    taskId,
-    status: 'cancelled',
-  });
-});
-
-// 获取任务状态
-app.get('/tasks/:taskId/status', (req, res) => {
-  const { taskId } = req.params;
-  const status = executor.getTaskStatus(taskId);
-  
-  res.json(status);
-});
-
-// 启动服务器
-app.listen(config.port, async () => {
-  console.log(`Worker ${config.workerId} listening on port ${config.port}`);
-  
-  // 向主服务注册
-  try {
-    await registration.register();
-    console.log(`Worker registered with main service`);
-    
-    // 启动心跳
-    registration.startHeartbeat();
-  } catch (error) {
-    console.error('Failed to register with main service:', error);
-    process.exit(1);
-  }
-});
-
-// 优雅关闭
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  
-  // 注销服务
-  await registration.unregister();
-  
-  // 等待任务完成
-  await executor.waitForTasksToComplete(30000); // 30s 超时
-  
-  process.exit(0);
-});
+  await app.listen(port);
+}
+bootstrap();
 ```
+
+```typescript
+// backtest-worker/src/worker.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { HttpModule } from '@nestjs/axios';
+import workerConfig from './config/worker.config';
+import { TasksController } from './controllers/tasks.controller';
+import { HealthController } from './controllers/health.controller';
+import { BacktestExecutor } from './executor/executor';
+import { WorkerRegistrationService } from './registration/worker-registration.service';
+import { TaskStatusStore } from './executor/task-status.store';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, load: [workerConfig] }),
+    HttpModule,
+  ],
+  controllers: [TasksController, HealthController],
+  providers: [BacktestExecutor, WorkerRegistrationService, TaskStatusStore],
+})
+export class WorkerModule {}
+```
+
+> Worker 服务沿用 NestJS 模块化、依赖注入、拦截器、异常过滤器等能力，可直接复用主服务里的监控、日志、Tracing Middleware，降低跨服务调试成本。
+
+#### 任务控制器（tasks.controller.ts）
+```typescript
+// backtest-worker/src/controllers/tasks.controller.ts
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { BacktestExecutor } from '../executor/executor';
+import { WorkerRegistrationService } from '../registration/worker-registration.service';
+import { ExecuteTaskDto, TaskStatusDto } from '@trading-platform/backtesting-contracts';
+
+@Controller()
+export class TasksController {
+  constructor(
+    private readonly executor: BacktestExecutor,
+    private readonly registration: WorkerRegistrationService,
+  ) {}
+
+  @Post('execute')
+  async execute(@Body() body: ExecuteTaskDto) {
+    const { taskId, config } = body;
+
+    this.registration.ensureRegistered();
+    this.executor.execute(taskId, config).catch(error => {
+      this.registration.reportFailure(taskId, error);
+    });
+
+    return {
+      taskId,
+      workerId: this.registration.workerId,
+      status: 'accepted',
+    };
+  }
+
+  @Post('tasks/:taskId/cancel')
+  cancel(@Param('taskId') taskId: string) {
+    this.executor.cancel(taskId);
+    return { taskId, status: 'cancelled' };
+  }
+
+  @Get('tasks/:taskId/status')
+  getStatus(@Param('taskId') taskId: string): TaskStatusDto {
+    return this.executor.getTaskStatus(taskId);
+  }
+}
+```
+
+状态接口遵循与主服务一致的 DTO（`TaskStatusDto`），便于 `worker-client` 统一消费，也方便 CLI/管理后台直接查询 Worker 的实时状态。
 
 #### Worker 注册（registration.ts）
 ```typescript
-// backtest-worker/src/registration.ts
-import axios from 'axios';
+// backtest-worker/src/registration/worker-registration.service.ts
+import { HttpService } from '@nestjs/axios';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { TaskStatusStore } from '../executor/task-status.store';
+import { catchError } from 'rxjs/operators';
+import { EMPTY, firstValueFrom } from 'rxjs';
 
-export class WorkerRegistration {
+@Injectable()
+export class WorkerRegistrationService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(WorkerRegistrationService.name);
   private heartbeatTimer?: NodeJS.Timeout;
-  
-  constructor(private config: {
-    workerId: string;
-    port: number;
-    mainServiceUrl: string;
-  }) {}
-  
-  async register(): Promise<void> {
-    await axios.post(
-      `${this.config.mainServiceUrl}/api/internal/workers/register`,
-      {
-        workerId: this.config.workerId,
-        host: 'localhost', // TODO: 自动检测
-        port: this.config.port,
-        capabilities: {
-          maxConcurrentTasks: 1,
-          supportedStrategies: ['*'],
+  readonly workerId = this.config.get<string>('worker.identity', `worker-${process.pid}`);
+
+  constructor(
+    private readonly http: HttpService,
+    private readonly config: ConfigService,
+    private readonly taskStatusStore: TaskStatusStore,
+  ) {}
+
+  async onModuleInit() {
+    await this.register();
+    this.startHeartbeat();
+  }
+
+  onModuleDestroy() {
+    this.stopHeartbeat();
+    return this.unregister();
+  }
+
+  ensureRegistered() {
+    if (!this.heartbeatTimer) {
+      this.startHeartbeat();
+    }
+  }
+
+  reportFailure(taskId: string, error: Error) {
+    this.taskStatusStore.fail(taskId, error);
+  }
+
+  private async register() {
+    await firstValueFrom(
+      this.http.post(
+        `${this.config.get<string>('worker.mainServiceUrl')}/api/internal/workers/register`,
+        {
+          workerId: this.workerId,
+          host: this.config.get<string>('worker.server.host'),
+          port: this.config.get<number>('worker.server.port'),
+          capabilities: this.config.get('worker.capabilities'),
         },
+      ),
+    );
+    this.logger.log(`Worker ${this.workerId} registered`);
+  }
+
+  private startHeartbeat() {
+    const interval = this.config.get<number>('worker.heartbeat.intervalMs', 10000);
+    this.heartbeatTimer = setInterval(() => {
+      firstValueFrom(
+        this.http.post(
+          `${this.config.get<string>('worker.mainServiceUrl')}/api/internal/workers/${this.workerId}/heartbeat`,
+          {
+            status: this.taskStatusStore.getAggregatedStatus(),
+            currentLoad: this.taskStatusStore.getRunningTasks(),
+            metrics: this.taskStatusStore.getMetricsSnapshot(),
+          },
+        ).pipe(
+          catchError(error => {
+            this.logger.error('Heartbeat failed', error?.stack || error);
+            return EMPTY;
+          }),
+        ),
+      );
+    }, interval);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+  }
+
+  private unregister() {
+    return firstValueFrom(
+      this.http.delete(
+        `${this.config.get<string>('worker.mainServiceUrl')}/api/internal/workers/${this.workerId}`,
+      ),
+    ).catch(error => {
+      this.logger.warn(`Failed to unregister: ${error.message}`);
+    });
+  }
+}
+```
+
+#### 任务状态存储（task-status.store.ts）
+```typescript
+// backtest-worker/src/executor/task-status.store.ts
+import { Injectable } from '@nestjs/common';
+import { TaskStatusDto } from '@trading-platform/backtesting-contracts';
+
+@Injectable()
+export class TaskStatusStore {
+  private readonly statuses = new Map<string, TaskStatusDto>();
+
+  start(taskId: string) {
+    this.statuses.set(taskId, {
+      taskId,
+      status: 'running',
+      progress: 0,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  update(taskId: string, patch: Partial<TaskStatusDto>) {
+    const current = this.statuses.get(taskId);
+    if (!current) return;
+    this.statuses.set(taskId, {
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  complete(taskId: string) {
+    this.update(taskId, { status: 'completed', progress: 1 });
+  }
+
+  fail(taskId: string, error: Error) {
+    this.update(taskId, { status: 'failed', error: error.message });
+  }
+
+  cancel(taskId: string) {
+    this.update(taskId, { status: 'cancelled' });
+  }
+
+  getTaskStatus(taskId: string): TaskStatusDto {
+    return (
+      this.statuses.get(taskId) || {
+        taskId,
+        status: 'pending',
+        progress: 0,
+        updatedAt: new Date().toISOString(),
       }
     );
   }
-  
-  startHeartbeat(): void {
-    this.heartbeatTimer = setInterval(async () => {
-      try {
-        await axios.post(
-          `${this.config.mainServiceUrl}/api/internal/workers/${this.config.workerId}/heartbeat`,
-          {
-            status: this.getStatus(),
-            currentLoad: this.getCurrentLoad(),
-            metrics: this.getMetrics(),
-          }
-        );
-      } catch (error) {
-        console.error('Heartbeat failed:', error);
-      }
-    }, 10000); // 10s
+
+  getAggregatedStatus() {
+    const running = Array.from(this.statuses.values()).filter(s => s.status === 'running').length;
+    return running === 0 ? 'idle' : 'busy';
   }
-  
-  async unregister(): Promise<void> {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-    }
-    
-    try {
-      await axios.delete(
-        `${this.config.mainServiceUrl}/api/internal/workers/${this.config.workerId}`
-      );
-    } catch (error) {
-      console.error('Failed to unregister:', error);
-    }
+
+  getRunningTasks() {
+    return Array.from(this.statuses.values()).filter(s => s.status === 'running').length;
   }
-  
-  private getStatus(): string {
-    // 'idle' | 'busy' | 'overloaded'
-    const load = this.getCurrentLoad();
-    if (load === 0) return 'idle';
-    if (load < 1) return 'busy';
-    return 'overloaded';
-  }
-  
-  private getCurrentLoad(): number {
-    // TODO: 实际实现
-    return 0;
-  }
-  
-  private getMetrics() {
-    const usage = process.memoryUsage();
+
+  getMetricsSnapshot() {
     return {
-      cpu: process.cpuUsage(),
-      memory: Math.round(usage.heapUsed / 1024 / 1024), // MB
-      uptime: process.uptime(),
+      runningTasks: this.getRunningTasks(),
+      lastUpdated: Date.now(),
     };
   }
 }
@@ -365,19 +436,21 @@ export class ServiceRegistryService {
 ```typescript
 // backend/src/backtesting/worker-client/worker-client.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import axios from 'axios';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 import { ServiceRegistryService } from '../service-registry/service-registry.service';
+import { ExecuteTaskDto, TaskStatusDto } from '@trading-platform/backtesting-contracts';
 
 @Injectable()
 export class WorkerClientService {
   private readonly logger = new Logger(WorkerClientService.name);
   
   constructor(
-    private serviceRegistry: ServiceRegistryService,
+    private readonly serviceRegistry: ServiceRegistryService,
+    private readonly http: HttpService,
   ) {}
   
   async executeTask(taskId: string, config: any): Promise<{ workerId: string; accepted: boolean }> {
-    // 选择一个 Worker
     const worker = this.serviceRegistry.selectWorker();
     
     if (!worker) {
@@ -386,24 +459,16 @@ export class WorkerClientService {
     
     const workerUrl = this.serviceRegistry.getWorkerUrl(worker.workerId);
     
-    try {
-      // 发送任务到 Worker
-      const response = await axios.post(
-        `${workerUrl}/execute`,
-        { taskId, config },
-        { timeout: 5000 }
-      );
-      
-      this.logger.log(`Task ${taskId} assigned to worker ${worker.workerId}`);
-      
-      return {
-        workerId: worker.workerId,
-        accepted: response.status === 202,
-      };
-    } catch (error) {
-      this.logger.error(`Failed to assign task ${taskId} to worker ${worker.workerId}:`, error);
-      throw error;
-    }
+    const response = await firstValueFrom(
+      this.http.post<ExecuteTaskDto>(`${workerUrl}/execute`, { taskId, config }, { timeout: 5000 }),
+    );
+    
+    this.logger.log(`Task ${taskId} assigned to worker ${worker.workerId}`);
+    
+    return {
+      workerId: worker.workerId,
+      accepted: response.status === 201 || response.status === 202,
+    };
   }
   
   async cancelTask(taskId: string, workerId: string): Promise<void> {
@@ -413,29 +478,33 @@ export class WorkerClientService {
       throw new Error(`Worker ${workerId} not found`);
     }
     
-    await axios.post(
-      `${workerUrl}/tasks/${taskId}/cancel`,
-      {},
-      { timeout: 5000 }
+    await firstValueFrom(
+      this.http.post(`${workerUrl}/tasks/${taskId}/cancel`, {}, { timeout: 5000 }),
     );
   }
   
-  async getTaskStatus(taskId: string, workerId: string): Promise<any> {
+  async getTaskStatus(taskId: string, workerId: string): Promise<TaskStatusDto> {
     const workerUrl = this.serviceRegistry.getWorkerUrl(workerId);
     
     if (!workerUrl) {
       throw new Error(`Worker ${workerId} not found`);
     }
     
-    const response = await axios.get(
-      `${workerUrl}/tasks/${taskId}/status`,
-      { timeout: 5000 }
+    const response = await firstValueFrom(
+      this.http.get<TaskStatusDto>(`${workerUrl}/tasks/${taskId}/status`, { timeout: 5000 }),
     );
     
     return response.data;
   }
 }
 ```
+
+### 3. 契约与一致性治理
+
+1. **共享 DTO**：回测任务、进度、状态等结构定义在 `libs/backtesting-contracts` 包中（`ExecuteTaskDto`、`TaskStatusDto`、`TaskProgressEvent` 等），主服务与 Worker 均通过 TypeScript 引用，避免 JSON 字段漂移。
+2. **状态枚举**：统一 `pending/running/completed/failed/cancelled` 等状态枚举，并在任务详情页、API 响应、队列消息内复用，保障同源数据。
+3. **拦截器与日志**：将主服务已有的 `RequestIdInterceptor`、`LoggingInterceptor`、异常过滤器在 `WorkerModule` 中注册，实现全局一致的 TraceId、Log 格式。
+4. **指标对齐**：`TaskStatusStore` 聚合运行中的任务数量、平均耗时等指标，并通过心跳和 `/health` 接口暴露，与主服务监控面板保持一致。
 
 ## 🚀 启动与部署
 
@@ -568,7 +637,13 @@ curl http://localhost:3000/api/internal/workers
 3. **错误处理**：Worker 崩溃时主服务需要检测并重新分配任务
 4. **资源限制**：为每个 Worker 设置合理的内存限制（如 1GB）
 
+## ♻️ 优化要点
+
+- **契约测试**：为 `/execute`、`/tasks/:taskId/status` 等接口编写 Pact/contract 测试，确保主服务与 Worker 的 DTO 演进保持同步。
+- **配置守卫**：结合 Nest Config validation（如 `class-validator` + `Joi`）在启动阶段校验 `MAIN_SERVICE_URL`、资源阈值等配置，避免环境漂移。
+- **观测性**：启用与主服务一致的 OpenTelemetry Provider，将任务 id、worker id 注入 trace/日志，方便排查跨服务链路。
+- **弹性扩展**：基于 TaskStatusStore 元数据计算 Worker 实际负载，动态调整 `maxConcurrentTasks`、自动扩缩容脚本或告警阈值。
+
 ---
 
 **下一步**：查看 [数据流式加载方案](./03-data-streaming.md)
-
