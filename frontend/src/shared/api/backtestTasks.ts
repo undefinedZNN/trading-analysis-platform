@@ -124,6 +124,8 @@ export interface BacktestTask {
   updatedAt: string;
   resultSummary?: ResultSummary;
   resultFilePath?: string;
+  assignedWorkerId?: string;
+  metricsSnapshot?: Record<string, any>;
   errorMessage?: string;
   errorStack?: string;
   createdBy?: string;

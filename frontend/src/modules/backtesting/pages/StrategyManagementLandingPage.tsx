@@ -51,185 +51,197 @@ const { Title, Paragraph, Text } = Typography;
 const DATE_FORMAT = 'YYYY-MM-DD HH:mm';
 type StrategyVersionDiff = VersionDiffResponse;
 const DEFAULT_SCRIPT_TEMPLATE = `/**
- * 双均线交叉策略 (MA Cross Strategy)
- * 
+ * 三连K动量策略 (Three Line Momentum Strategy)
+ *
  * 策略逻辑:
- * - 当快速均线上穿慢速均线时，产生买入信号（金叉）
- * - 当快速均线下穿慢速均线时，产生卖出信号（死叉）
- * 
- * 这是最经典的趋势跟踪策略之一，适合用于学习和参考
+ * - 监测最近 N 根K线（默认 3 根），当连续 N 根收阳时在最后一根收盘价开多
+ * - 止损位设置在序列第一根K线的最低价，可选加缓冲 stopBufferPercent
+ * - 止盈设置为 1R（或指定倍数），即入场价 + (入场价 - 止损) * takeProfitMultiple
+ *
+ * 相比双均线策略，该策略在短线动量行情中可获得更多入场机会。
  */
 
 import { defineStrategy } from '@platform/backtesting-sdk';
 
-/**
- * 策略参数接口定义
- */
 interface StrategyParams {
-  fastPeriod: number;
-  slowPeriod: number;
+  consecutiveBars: number;
+  takeProfitMultiple: number;
   positionSize: number;
+  stopBufferPercent: number;
 }
 
-/**
- * 策略状态接口定义
- */
+type CandleDirection = 'bullish' | 'bearish' | 'neutral';
+
+interface CandleSnapshot {
+  timestamp: string;
+  direction: CandleDirection;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+interface ActiveTrade {
+  entryPrice: number;
+  stopPrice: number;
+  targetPrice: number;
+}
+
 interface StrategyState {
   position: 'none' | 'long';
-  entryPrice: number | null;
-  lastFastMA: number | null;
-  lastSlowMA: number | null;
+  recentBars: CandleSnapshot[];
+  activeTrade: ActiveTrade | null;
 }
 
-/**
- * 主策略定义
- */
 export default defineStrategy({
-  // 参数定义
   parameters: [
     {
-      id: 'fastPeriod',
-      label: '快速均线周期',
+      id: 'consecutiveBars',
+      label: '连续阳线数量',
       type: 'integer',
-      defaultValue: 10,
+      defaultValue: 3,
       required: true,
       validator: {
         min: 2,
-        max: 100,
+        max: 6,
       },
     },
     {
-      id: 'slowPeriod',
-      label: '慢速均线周期',
-      type: 'integer',
-      defaultValue: 30,
+      id: 'takeProfitMultiple',
+      label: '止盈倍数 (R)',
+      type: 'number',
+      defaultValue: 1,
       required: true,
       validator: {
-        min: 5,
-        max: 200,
+        min: 0.5,
+        max: 3,
       },
     },
     {
       id: 'positionSize',
-      label: '仓位大小',
-      desc: '占总资金比例',
+      label: '仓位占比',
       type: 'number',
       defaultValue: 0.5,
       required: true,
       validator: {
         min: 0.1,
-        max: 1.0,
+        max: 1,
+      },
+    },
+    {
+      id: 'stopBufferPercent',
+      label: '止损缓冲 (%)',
+      type: 'number',
+      defaultValue: 0,
+      required: true,
+      validator: {
+        min: 0,
+        max: 0.02,
       },
     },
   ],
 
-  // 因子定义（技术指标）
-  factors: [
-    {
-      id: 'fast_ma',
-      label: '快速均线',
-      type: 'MA',
-      params: {
-        period: 10,
-      },
-    },
-    {
-      id: 'slow_ma',
-      label: '慢速均线',
-      type: 'MA',
-      params: {
-        period: 30,
-      },
-    },
-  ],
+  factors: [],
 
-  // 策略核心逻辑
   run(ctx: any): void {
-    // 获取参数
     const params = ctx.getParameters() as StrategyParams;
+    const required = Math.max(2, Math.floor(params.consecutiveBars ?? 3));
 
-    // 初始化状态
     let state: StrategyState = ctx.getState() || {
       position: 'none',
-      entryPrice: null,
-      lastFastMA: null,
-      lastSlowMA: null,
+      recentBars: [],
+      activeTrade: null,
     };
 
-    // 获取当前K线数据
     const bar = ctx.getCurrentBar();
     if (!bar) return;
 
+    const open = parseFloat(bar.open);
+    const high = parseFloat(bar.high);
+    const low = parseFloat(bar.low);
     const close = parseFloat(bar.close);
-    const fastMA = ctx.getFactorValue('fast_ma') as number | null;
-    const slowMA = ctx.getFactorValue('slow_ma') as number | null;
-
-    // 检查指标是否可用
-    if (fastMA === null || slowMA === null) {
+    if ([open, high, low, close].some((value) => !Number.isFinite(value))) {
       return;
     }
 
-    // 检测均线交叉
-    let crossover: 'golden' | 'death' | 'none' = 'none';
+    const direction: CandleDirection = close > open ? 'bullish' : close < open ? 'bearish' : 'neutral';
+    state.recentBars.push({ timestamp: bar.timestamp, direction, open, high, low, close });
+    const limit = Math.max(5, required + 2);
+    while (state.recentBars.length > limit) {
+      state.recentBars.shift();
+    }
 
-    if (state.lastFastMA !== null && state.lastSlowMA !== null) {
-      // 金叉：快线从下方穿越慢线
-      if (state.lastFastMA <= state.lastSlowMA && fastMA > slowMA) {
-        crossover = 'golden';
-      }
-      // 死叉：快线从上方穿越慢线
-      else if (state.lastFastMA >= state.lastSlowMA && fastMA < slowMA) {
-        crossover = 'death';
+    if (state.activeTrade) {
+      const stopHit = low <= state.activeTrade.stopPrice;
+      const targetHit = high >= state.activeTrade.targetPrice;
+      if (stopHit || targetHit) {
+        const exitReason = stopHit ? 'stop_loss' : 'take_profit';
+        const priceRef = stopHit ? state.activeTrade.stopPrice : state.activeTrade.targetPrice;
+        ctx.log(
+          stopHit ? 'warn' : 'info',
+          \`Three Line Momentum exit @ \${priceRef.toFixed(2)} (\${exitReason})\`,
+        );
+        ctx.submitOrder({
+          type: 'market',
+          side: 'sell',
+          quantity: 'all',
+          reason: exitReason,
+        });
+        state.position = 'none';
+        state.activeTrade = null;
       }
     }
 
-    // 记录指标数据
+    if (state.position === 'none' && state.recentBars.length >= required) {
+      const sequence = state.recentBars.slice(-required);
+      const bullish = sequence.every((item) => item.direction === 'bullish');
+      if (bullish) {
+        const firstBar = sequence[0];
+        const entryPrice = close;
+        const bufferPercent = Math.max(0, params.stopBufferPercent ?? 0);
+        const bufferedStop = firstBar.low - entryPrice * bufferPercent;
+        const stopPrice = Math.max(0, bufferedStop > 0 ? bufferedStop : firstBar.low);
+        const riskPerUnit = entryPrice - stopPrice;
+        if (riskPerUnit > 0) {
+          const targetPrice = entryPrice + riskPerUnit * (params.takeProfitMultiple ?? 1);
+          const equity = ctx.getEquity();
+          const positionFraction = Math.min(Math.max(params.positionSize ?? 0.5, 0.1), 1);
+          const positionValue = equity * positionFraction;
+          const quantity = positionValue / entryPrice;
+
+          if (quantity > 0 && Number.isFinite(quantity)) {
+            ctx.log(
+              'info',
+              \`Three Line Momentum entry @ \${entryPrice.toFixed(2)} (stop: \${stopPrice.toFixed(
+                2,
+              )}, target: \${targetPrice.toFixed(2)})\`,
+            );
+            ctx.submitOrder({
+              type: 'market',
+              side: 'buy',
+              quantity: quantity.toFixed(8),
+              reason: 'three_line_momentum_entry',
+            });
+
+            state.position = 'long';
+            state.activeTrade = {
+              entryPrice,
+              stopPrice,
+              targetPrice,
+            };
+          }
+        }
+      }
+    }
+
     ctx.recordMetrics({
-      fast_ma: fastMA,
-      slow_ma: slowMA,
-      crossover: crossover,
+      direction,
       position: state.position,
+      entryPrice: state.activeTrade?.entryPrice ?? null,
+      stopPrice: state.activeTrade?.stopPrice ?? null,
+      targetPrice: state.activeTrade?.targetPrice ?? null,
     });
 
-    // 生成交易信号
-    if (crossover === 'golden' && state.position !== 'long') {
-      // 金叉：买入
-      const equity = ctx.getEquity();
-      const positionValue = equity * params.positionSize;
-      const quantity = positionValue / close;
-
-      ctx.log('info', \`Golden Cross - Buy Signal at \${close.toFixed(2)}\`);
-
-      ctx.submitOrder({
-        type: 'market',
-        side: 'buy',
-        quantity: quantity.toFixed(8),
-        reason: 'golden_cross',
-      });
-
-      state.position = 'long';
-      state.entryPrice = close;
-    } else if (crossover === 'death' && state.position === 'long') {
-      // 死叉：卖出
-      if (state.entryPrice) {
-        const pnl = ((close - state.entryPrice) / state.entryPrice) * 100;
-        ctx.log('info', \`Death Cross - Sell Signal at \${close.toFixed(2)}, PnL: \${pnl.toFixed(2)}%\`);
-      }
-
-      ctx.submitOrder({
-        type: 'market',
-        side: 'sell',
-        quantity: 'all',
-        reason: 'death_cross',
-      });
-
-      state.position = 'none';
-      state.entryPrice = null;
-    }
-
-    // 更新状态
-    state.lastFastMA = fastMA;
-    state.lastSlowMA = slowMA;
     ctx.setState(state);
   },
 });

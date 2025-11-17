@@ -9,11 +9,13 @@ import { StrategiesService } from './strategies/strategies.service';
 import { StrategyScriptParser } from './strategies/strategy-script.parser';
 import { StrategyScriptValidator } from './strategies/strategy-script.validator';
 import { BacktestTasksModule } from './tasks/backtest-tasks.module';
+import { MonitoringModule } from './monitoring/monitoring.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([StrategyEntity, ScriptVersionEntity]),
     BacktestTasksModule,
+    MonitoringModule,
   ],
   controllers: [BacktestingController, StrategiesController],
   providers: [

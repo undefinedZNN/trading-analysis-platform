@@ -1,8 +1,25 @@
 import { config as loadEnv } from 'dotenv';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { mkdirSync } from 'fs';
 import { DataSource, DataSourceOptions } from 'typeorm';
 
 loadEnv();
+
+const entitiesPath = [join(__dirname, '..', '**', '*.entity.{ts,js}')];
+const migrationsPath = [join(__dirname, '..', 'migrations', '*.{ts,js}')];
+
+const dbType = (process.env.DB_TYPE ?? '').toLowerCase();
+const useSqlite =
+  dbType === 'sqlite' ||
+  (process.env.DB_USE_SQLITE ?? '').toLowerCase() === 'true';
+
+const sqlitePath =
+  process.env.DB_SQLITE_PATH ?? join(process.cwd(), 'sqlite', 'dev.sqlite');
+
+if (useSqlite) {
+  const dir = dirname(sqlitePath);
+  mkdirSync(dir, { recursive: true });
+}
 
 const dbHost = process.env.DB_HOST ?? process.env.DATABASE_HOST ?? 'localhost';
 const dbPort = parseInt(
@@ -14,19 +31,30 @@ const dbPassword =
   process.env.DB_PASSWORD ?? process.env.DATABASE_PASSWORD ?? 'trading_password';
 const dbName = process.env.DB_NAME ?? process.env.DATABASE_NAME ?? 'trading_analysis';
 
-export const dataSourceOptions: DataSourceOptions = {
-  type: 'postgres',
-  host: dbHost,
-  port: dbPort,
-  username: dbUser,
-  password: dbPassword,
-  database: dbName,
-  entities: [join(__dirname, '..', '**', '*.entity.{ts,js}')],
-  migrations: [join(__dirname, '..', 'migrations', '*.{ts,js}')],
-  migrationsTableName: 'typeorm_migrations',
-  synchronize: false,
-  logging: process.env.TYPEORM_LOGGING === 'true',
-};
+const baseLogging = process.env.TYPEORM_LOGGING === 'true';
+
+export const dataSourceOptions: DataSourceOptions = useSqlite
+  ? {
+      type: 'sqlite',
+      database: sqlitePath,
+      entities: entitiesPath,
+      migrations: migrationsPath,
+      synchronize: true,
+      logging: baseLogging,
+    }
+  : {
+      type: 'postgres',
+      host: dbHost,
+      port: dbPort,
+      username: dbUser,
+      password: dbPassword,
+      database: dbName,
+      entities: entitiesPath,
+      migrations: migrationsPath,
+      migrationsTableName: 'typeorm_migrations',
+      synchronize: false,
+      logging: baseLogging,
+    };
 
 // console.log('dataSourceOptions', dataSourceOptions);
 

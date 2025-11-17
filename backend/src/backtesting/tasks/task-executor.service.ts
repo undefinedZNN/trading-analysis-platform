@@ -7,6 +7,10 @@ import { StrategiesService } from '../strategies/strategies.service';
 import { TradingDataService } from '../../trading-data/trading-data.service';
 import { resolveDatasetPath } from '../../config/storage.config';
 import { BacktestTaskEntity, BacktestTaskStatus, ResultSummary } from './entities';
+import { ExecuteTaskDto } from '@trading-platform/backtesting-contracts';
+import { WorkerClientService } from '../worker-client/worker-client.service';
+import { ExecutionConfigDto } from './dto/create-backtest-task.dto';
+import { DatasetEntity } from '../../trading-data/entities/dataset.entity';
 import {
   Orchestrator,
   Session,
@@ -60,6 +64,10 @@ export class TaskExecutorService {
    */
   private readonly activeSessions = new Map<string, Session>();
   
+  private useWorkerMode(): boolean {
+    return this.workerClient?.isEnabled() ?? false;
+  }
+  
   /**
    * Orchestrator 实例
    */
@@ -70,6 +78,7 @@ export class TaskExecutorService {
     private readonly logsService: TaskLogsService,
     private readonly strategiesService: StrategiesService,
     private readonly tradingDataService: TradingDataService,
+    private readonly workerClient: WorkerClientService,
     @InjectRepository(BacktestTaskEntity)
     private readonly taskRepository: Repository<BacktestTaskEntity>,
   ) {
@@ -111,6 +120,21 @@ export class TaskExecutorService {
       // 4. 更新状态为 running
       await this.tasksService.updateStatus(taskId, BacktestTaskStatus.RUNNING);
       await this.logsService.info(taskId, 'TaskExecutor', 'Task execution started');
+
+      if (this.useWorkerMode()) {
+        const workerId = await this.tryDispatchToWorker(task);
+        if (workerId) {
+          await this.taskRepository.update(
+            { taskId: task.taskId },
+            { assignedWorkerId: workerId },
+          );
+          return;
+        }
+      }
+      await this.taskRepository.update(
+        { taskId: task.taskId },
+        { assignedWorkerId: null },
+      );
       
       // 5. 准备 Orchestrator 配置
       const config = await this.prepareOrchestratorConfig(task);
@@ -141,43 +165,174 @@ export class TaskExecutorService {
    */
   async cancelTask(taskId: string): Promise<void> {
     this.logger.log(`Cancelling task ${taskId}`);
-    
+
     try {
-      // 1. 检查任务状态
       const task = await this.tasksService.findOne(taskId);
-      
+
+      if (task.status === BacktestTaskStatus.PENDING) {
+        this.logger.log(`Task ${taskId} pending, no active execution to cancel`);
+        return;
+      }
+
       if (task.status !== BacktestTaskStatus.RUNNING) {
         throw new BadRequestException(
-          `Only running tasks can be cancelled (current status: ${task.status})`
+          `Only pending or running tasks can be cancelled (current status: ${task.status})`,
         );
       }
-      
-      // 2. 停止 Orchestrator 会话
+
+      if (this.useWorkerMode() && task.assignedWorkerId) {
+        await this.workerClient
+          .cancelTask(taskId, task.assignedWorkerId)
+          .catch((error) => {
+            this.logger.warn(
+              `Failed to forward cancellation to worker ${task.assignedWorkerId}: ${error?.message}`,
+            );
+          });
+        return;
+      }
+
       const session = this.activeSessions.get(taskId);
       if (session) {
         await this.orchestrator.stop(taskId, 'User cancelled');
         this.activeSessions.delete(taskId);
       }
-      
-      // 3. 更新状态
-      await this.tasksService.updateStatus(taskId, BacktestTaskStatus.CANCELLED);
-      await this.taskRepository.update(
-        { taskId },
-        { completedAt: new Date() }
-      );
-      
-      // 4. 记录日志
-      await this.logsService.info(taskId, 'TaskExecutor', 'Task cancelled by user');
-      
-      // 5. 清理资源
+
       this.progressUpdateThrottle.delete(taskId);
-      
-      this.logger.log(`Task ${taskId} cancelled successfully`);
-      
+      await this.logsService.info(taskId, 'TaskExecutor', 'Task cancelled by user');
     } catch (error) {
-      this.logger.error(`Failed to cancel task ${taskId}: ${error.message}`);
+      this.logger.error(`Failed to cancel task ${taskId}: ${(error as Error).message}`);
       throw error;
     }
+  }
+
+  private async tryDispatchToWorker(task: BacktestTaskEntity): Promise<string | null> {
+    if (!this.useWorkerMode()) {
+      return null;
+    }
+
+    try {
+      const payload = await this.buildWorkerPayload(task);
+      const response = await this.workerClient.dispatchTask(payload);
+      await this.logsService.info(
+        task.taskId,
+        'WorkerClient',
+        'Task dispatched to worker',
+        {
+          workerId: response?.workerId ?? 'unknown',
+        },
+      );
+      this.logger.log(
+        `Task ${task.taskId} dispatched to worker ${response?.workerId ?? 'unknown'}`,
+      );
+      return response?.workerId ?? null;
+    } catch (error: any) {
+      this.logger.warn(
+        `Failed to dispatch task ${task.taskId} to worker: ${error?.message || error}`,
+      );
+      await this.logsService.warn(
+        task.taskId,
+        'WorkerClient',
+        'Worker dispatch failed, falling back to local execution',
+        { error: error?.message || String(error) },
+      );
+      return null;
+    }
+  }
+
+  private async buildWorkerPayload(task: BacktestTaskEntity): Promise<ExecuteTaskDto> {
+    const strategy = await this.strategiesService.getStrategy(task.strategyId);
+    const version = strategy.scriptVersions.find(
+      (item) => item.scriptVersionId === task.scriptVersionId,
+    );
+
+    if (!version) {
+      throw new NotFoundException(
+        `Script version ${task.scriptVersionId} not found for strategy ${task.strategyId}`,
+      );
+    }
+
+    const dataset = await this.tradingDataService.getDatasetById(task.datasetId);
+    const executionConfig = (task.executionConfig as ExecutionConfigDto) || ({} as ExecutionConfigDto);
+    const timeRange = task.dataConfig?.timeRange || {
+      start: dataset.timeStart.toISOString(),
+      end: dataset.timeEnd.toISOString(),
+    };
+    const timeframe = task.dataConfig?.timeframe || dataset.granularity;
+    const datasetSymbol = this.resolveDatasetSymbol(dataset);
+    const datasetPathTemplate = this.resolveDatasetPathTemplate(dataset);
+
+    const parameters = {
+      ...task.strategyParams,
+      strategyType: task.strategyParams?.strategyType || strategy.strategyId,
+      scriptVersionId: version.scriptVersionId,
+      initialCapital: executionConfig?.initialCapital ?? 10000,
+      leverage: executionConfig?.leverage ?? 1,
+      slippage: executionConfig?.slippage ?? 0,
+      fees: executionConfig?.fees ?? {},
+      riskRules: (executionConfig as any)?.riskRules ?? [],
+      datasetPath: dataset.path,
+      datasetRoot: datasetSymbol,
+      datasetPathTemplate,
+      datasetBaseGranularity: dataset.granularity,
+      datasetAvailableGranularities: dataset.availableGranularities ?? [],
+    };
+
+    return {
+      taskId: task.taskId,
+      config: {
+        strategyId: strategy.strategyId,
+        datasetId: datasetSymbol || dataset.tradingPair || String(task.datasetId),
+        timeframe,
+        timeRange: {
+          start: this.asIsoString(timeRange.start),
+          end: this.asIsoString(timeRange.end),
+        },
+        parameters,
+      },
+    };
+  }
+
+  private asIsoString(value: string | Date): string {
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    return new Date(value).toISOString();
+  }
+
+  private resolveDatasetSymbol(dataset: DatasetEntity): string {
+    const template = dataset.pathTemplate;
+    if (template?.includes('{granularity}')) {
+      return template.replace(/\/?\{granularity\}$/, '').replace(/\/+$/, '');
+    }
+
+    const normalizedPath = dataset.path?.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (normalizedPath) {
+      const segments = normalizedPath.split('/');
+      if (segments.length > 1) {
+        segments.pop();
+        return segments.join('/');
+      }
+      return normalizedPath;
+    }
+
+    return dataset.tradingPair?.replace('/', '_') || String(dataset.datasetId);
+  }
+
+  private resolveDatasetPathTemplate(dataset: DatasetEntity): string | null {
+    if (dataset.pathTemplate) {
+      return dataset.pathTemplate;
+    }
+
+    const normalizedPath = dataset.path?.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (normalizedPath) {
+      const segments = normalizedPath.split('/');
+      if (segments.length > 0) {
+        segments[segments.length - 1] = '{granularity}';
+        return segments.join('/');
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -524,5 +679,3 @@ export class TaskExecutorService {
     }
   }
 }
-
-

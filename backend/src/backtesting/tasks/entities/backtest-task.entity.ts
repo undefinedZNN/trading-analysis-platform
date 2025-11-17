@@ -200,6 +200,15 @@ export class BacktestTaskEntity {
   resultFilePath?: string;
 
   /**
+   * 当前分配的 Worker ID
+   */
+  @Column({ name: 'assigned_worker_id', type: 'varchar', length: 128, nullable: true })
+  assignedWorkerId?: string;
+
+  @Column({ name: 'metrics_snapshot', type: 'jsonb', nullable: true })
+  metricsSnapshot?: Record<string, unknown>;
+
+  /**
    * 错误信息
    * 任务失败时记录简要错误描述
    */
@@ -225,4 +234,3 @@ export class BacktestTaskEntity {
   @Column({ name: 'updated_by', type: 'varchar', length: 64, nullable: true })
   updatedBy?: string;
 }
-

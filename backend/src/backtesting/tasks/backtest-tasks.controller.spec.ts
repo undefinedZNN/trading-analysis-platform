@@ -4,11 +4,16 @@ import { BacktestTasksService } from './backtest-tasks.service';
 import { TaskLogsService } from './task-logs.service';
 import { BacktestTaskEntity, BacktestTaskStatus, TaskLogEntity, LogLevel } from './entities';
 import { CreateBacktestTaskDto, ListBacktestTasksDto, ListTaskLogsDto } from './dto';
+import { TaskExecutorService } from './task-executor.service';
 
 describe('BacktestTasksController', () => {
   let controller: BacktestTasksController;
   let backtestTasksService: jest.Mocked<BacktestTasksService>;
   let taskLogsService: jest.Mocked<TaskLogsService>;
+  const taskExecutorServiceMock = {
+    executeTask: jest.fn(),
+    cancelTask: jest.fn(),
+  } as Partial<jest.Mocked<TaskExecutorService>>;
 
   const mockTask: BacktestTaskEntity = {
     taskId: 'task-id-123',
@@ -52,6 +57,8 @@ describe('BacktestTasksController', () => {
       retry: jest.fn(),
       copyTaskConfig: jest.fn(),
       remove: jest.fn(),
+      updateProgressFromWorker: jest.fn(),
+      completeFromWorker: jest.fn(),
     };
 
     const taskLogsServiceMock: Partial<jest.Mocked<TaskLogsService>> = {
@@ -64,6 +71,7 @@ describe('BacktestTasksController', () => {
       providers: [
         { provide: BacktestTasksService, useValue: backtestTasksServiceMock },
         { provide: TaskLogsService, useValue: taskLogsServiceMock },
+        { provide: TaskExecutorService, useValue: taskExecutorServiceMock },
       ],
     }).compile();
 
@@ -184,9 +192,11 @@ describe('BacktestTasksController', () => {
       };
 
       backtestTasksService.cancel.mockResolvedValue(cancelledTask);
+      (taskExecutorServiceMock.cancelTask as jest.Mock).mockResolvedValue(undefined);
 
       const result = await controller.cancel('task-id-123');
 
+      expect(taskExecutorServiceMock.cancelTask).toHaveBeenCalledWith('task-id-123');
       expect(backtestTasksService.cancel).toHaveBeenCalledWith('task-id-123');
       expect(result.status).toBe(BacktestTaskStatus.CANCELLED);
     });
@@ -321,5 +331,28 @@ describe('BacktestTasksController', () => {
       expect(result.total).toBe(0);
     });
   });
-});
 
+  describe('updateProgress', () => {
+    it('应该调用service.updateProgressFromWorker', async () => {
+      backtestTasksService.updateProgressFromWorker.mockResolvedValue(undefined);
+
+      await controller.updateProgress('task-id-123', { progress: 0.5 }, undefined);
+
+      expect(backtestTasksService.updateProgressFromWorker).toHaveBeenCalledWith('task-id-123', {
+        progress: 0.5,
+      });
+    });
+  });
+
+  describe('submitResult', () => {
+    it('应该调用service.completeFromWorker', async () => {
+      backtestTasksService.completeFromWorker.mockResolvedValue(undefined);
+
+      await controller.submitResult('task-id-123', { status: 'completed' }, undefined);
+
+      expect(backtestTasksService.completeFromWorker).toHaveBeenCalledWith('task-id-123', {
+        status: 'completed',
+      });
+    });
+  });
+});

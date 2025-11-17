@@ -50,6 +50,12 @@ export const TaskResultsTab: React.FC<TaskResultsTabProps> = ({ task }) => {
   }
 
   const result = task.resultSummary;
+  const formatCurrency = (value?: number) => {
+    if (value === undefined || value === null) {
+      return '-';
+    }
+    return value.toLocaleString();
+  };
 
   /**
    * 获取收益率颜色
@@ -392,7 +398,7 @@ export const TaskResultsTab: React.FC<TaskResultsTabProps> = ({ task }) => {
         <Descriptions column={2} bordered>
           <Descriptions.Item label="初始资金">
             <Text strong>
-              ${task.executionConfig.initialCapital.toLocaleString()}
+              ${formatCurrency(task.executionConfig.initialCapital)}
             </Text>
           </Descriptions.Item>
           <Descriptions.Item label="最终资金">
@@ -404,7 +410,7 @@ export const TaskResultsTab: React.FC<TaskResultsTabProps> = ({ task }) => {
                 ),
               }}
             >
-              ${result.finalCapital.toLocaleString()}
+              ${formatCurrency(result.finalCapital)}
             </Text>
           </Descriptions.Item>
           <Descriptions.Item label="杠杆倍数">
@@ -455,4 +461,3 @@ export const TaskResultsTab: React.FC<TaskResultsTabProps> = ({ task }) => {
 };
 
 export default TaskResultsTab;
-

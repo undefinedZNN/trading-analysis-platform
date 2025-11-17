@@ -172,6 +172,9 @@ export const TaskDetailPage: React.FC = () => {
     );
   }
 
+  const metricsSnapshot = task.metricsSnapshot as Record<string, any> | undefined;
+  const metricsEntries = metricsSnapshot ? Object.entries(metricsSnapshot) : [];
+
   return (
     <div style={{ padding: '24px' }}>
       {/* 面包屑导航 */}
@@ -270,6 +273,37 @@ export const TaskDetailPage: React.FC = () => {
         </Space>
       </Card>
 
+      {/* Worker & 实时指标 */}
+      <Card style={{ marginBottom: 16 }} title="Worker & 实时指标">
+        <Descriptions column={2} size="small">
+          <Descriptions.Item label="调度 Worker">
+            {task.assignedWorkerId ? (
+              <Tag color="geekblue">{task.assignedWorkerId}</Tag>
+            ) : (
+              <Text type="secondary">未分配 / 本地执行</Text>
+            )}
+          </Descriptions.Item>
+          <Descriptions.Item label="指标快照">
+            {metricsEntries.length > 0 ? (
+              <pre
+                style={{
+                  margin: 0,
+                  background: '#f6f8fa',
+                  padding: 12,
+                  borderRadius: 4,
+                  maxHeight: 200,
+                  overflow: 'auto',
+                }}
+              >
+                {JSON.stringify(metricsSnapshot, null, 2)}
+              </pre>
+            ) : (
+              <Text type="secondary">暂无上报</Text>
+            )}
+          </Descriptions.Item>
+        </Descriptions>
+      </Card>
+
       {/* Tab内容区域 */}
       <Card>
         <Tabs
@@ -321,4 +355,3 @@ export const TaskDetailPage: React.FC = () => {
 };
 
 export default TaskDetailPage;
-

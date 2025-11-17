@@ -5,6 +5,7 @@ import { AppService } from './app.service';
 import { dataSourceOptions } from './database/typeorm.datasource';
 import { TradingDataModule } from './trading-data/trading-data.module';
 import { BacktestingModule } from './backtesting/backtesting.module';
+import { ServiceRegistryModule } from './backtesting/service-registry/service-registry.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { BacktestingModule } from './backtesting/backtesting.module';
       autoLoadEntities: true,
     }),
     BacktestingModule,
+    ServiceRegistryModule,
     TradingDataModule,
   ],
   controllers: [AppController],

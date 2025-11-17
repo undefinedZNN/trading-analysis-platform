@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BacktestTaskEntity, TaskLogEntity } from './entities';
 import { BacktestTasksService } from './backtest-tasks.service';
@@ -11,6 +11,8 @@ import { StrategyScriptValidator } from '../strategies/strategy-script.validator
 import { StrategyEntity } from '../entities/strategy.entity';
 import { ScriptVersionEntity } from '../entities/script-version.entity';
 import { TradingDataModule } from '../../trading-data/trading-data.module';
+import { WorkerClientModule } from '../worker-client/worker-client.module';
+import { ServiceRegistryModule } from '../service-registry/service-registry.module';
 
 /**
  * 回测任务管理模块
@@ -26,6 +28,8 @@ import { TradingDataModule } from '../../trading-data/trading-data.module';
       ScriptVersionEntity,
     ]),
     TradingDataModule, // 导入 TradingDataModule 以访问 TradingDataService
+    WorkerClientModule,
+    ServiceRegistryModule,
   ],
   controllers: [BacktestTasksController],
   providers: [
@@ -43,4 +47,3 @@ import { TradingDataModule } from '../../trading-data/trading-data.module';
   ],
 })
 export class BacktestTasksModule {}
-

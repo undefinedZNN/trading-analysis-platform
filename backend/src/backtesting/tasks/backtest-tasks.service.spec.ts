@@ -5,6 +5,8 @@ import { BacktestTasksService } from './backtest-tasks.service';
 import { BacktestTaskEntity, BacktestTaskStatus } from './entities';
 import { CreateBacktestTaskDto, UpdateBacktestTaskDto, SortField, SortOrder } from './dto';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { ServiceRegistryService } from '../service-registry/service-registry.service';
+import { BacktestMetricsService } from '../monitoring/backtest-metrics.service';
 
 type MockRepository<T = any> = Partial<Record<keyof Repository<T>, jest.Mock>> & {
   createQueryBuilder?: jest.Mock;
@@ -30,6 +32,7 @@ const createMockRepository = (): MockRepository => {
     save: jest.fn(async (entity) => entity),
     findOne: jest.fn(),
     remove: jest.fn(async (entity) => entity),
+    update: jest.fn(async () => ({})),
     createQueryBuilder: jest.fn(() => qb),
   };
 };
@@ -37,6 +40,15 @@ const createMockRepository = (): MockRepository => {
 describe('BacktestTasksService', () => {
   let service: BacktestTasksService;
   let repository: MockRepository<BacktestTaskEntity>;
+  let serviceRegistry: {
+    updateLoad: jest.Mock;
+    register: jest.Mock;
+    listWorkers: jest.Mock;
+  };
+  let metrics: {
+    recordTaskStatusChange: jest.Mock;
+    recordTaskProgress: jest.Mock;
+  };
 
   const mockTask: BacktestTaskEntity = {
     taskId: 'task-id-123',
@@ -63,6 +75,11 @@ describe('BacktestTasksService', () => {
   } as BacktestTaskEntity;
 
   beforeEach(async () => {
+    metrics = {
+      recordTaskStatusChange: jest.fn(),
+      recordTaskProgress: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BacktestTasksService,
@@ -70,11 +87,24 @@ describe('BacktestTasksService', () => {
           provide: getRepositoryToken(BacktestTaskEntity),
           useValue: createMockRepository(),
         },
+        {
+          provide: ServiceRegistryService,
+          useValue: {
+            updateLoad: jest.fn(),
+            register: jest.fn(),
+            listWorkers: jest.fn().mockReturnValue([]),
+          },
+        },
+        {
+          provide: BacktestMetricsService,
+          useValue: metrics,
+        },
       ],
     }).compile();
 
     service = module.get(BacktestTasksService);
     repository = module.get(getRepositoryToken(BacktestTaskEntity)) as MockRepository<BacktestTaskEntity>;
+    serviceRegistry = module.get(ServiceRegistryService) as any;
   });
 
   afterEach(() => {
@@ -546,5 +576,65 @@ describe('BacktestTasksService', () => {
       await expect(service.retry('task-id-123')).rejects.toThrow(BadRequestException);
     });
   });
-});
 
+  describe('updateProgressFromWorker', () => {
+    it('应该记录 workerId 和实时指标', async () => {
+      repository.findOne!.mockResolvedValue({
+        ...mockTask,
+        status: BacktestTaskStatus.PENDING,
+        startedAt: undefined,
+        metricsSnapshot: null,
+        assignedWorkerId: null,
+      });
+
+      await service.updateProgressFromWorker('task-id-123', {
+        progress: 0.42,
+        workerId: 'worker-1',
+        metrics: { runningTasks: 1 },
+      });
+
+      expect(repository.update).toHaveBeenCalledWith(
+        { taskId: 'task-id-123' },
+        expect.objectContaining({
+          progress: 42,
+          assignedWorkerId: 'worker-1',
+          metricsSnapshot: { runningTasks: 1 },
+          status: BacktestTaskStatus.RUNNING,
+        }),
+      );
+      expect(metrics.recordTaskProgress).toHaveBeenCalledWith(42);
+    });
+  });
+
+  describe('completeFromWorker', () => {
+    it('应该映射状态并释放 worker 负载', async () => {
+      repository.findOne!.mockResolvedValue({
+        ...mockTask,
+        status: BacktestTaskStatus.RUNNING,
+        assignedWorkerId: 'worker-1',
+        metricsSnapshot: { runningTasks: 1 },
+      });
+
+      const updateStatusSpy = jest
+        .spyOn(service, 'updateStatus')
+        .mockResolvedValue({ ...mockTask, status: BacktestTaskStatus.FAILED } as BacktestTaskEntity);
+
+      await service.completeFromWorker('task-id-123', {
+        status: 'failed',
+        workerId: 'worker-1',
+        metrics: { throughput: 321 },
+      });
+
+      expect(updateStatusSpy).toHaveBeenCalledWith(
+        'task-id-123',
+        BacktestTaskStatus.FAILED,
+        expect.objectContaining({
+          metricsSnapshot: { throughput: 321 },
+          assignedWorkerId: null,
+        }),
+      );
+      expect(serviceRegistry.updateLoad).toHaveBeenCalledWith('worker-1', -1);
+      updateStatusSpy.mockRestore();
+    });
+  });
+});

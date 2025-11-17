@@ -22,6 +22,14 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
   const equityPlotRef = useRef<Line | null>(null);
   const drawdownPlotRef = useRef<Line | null>(null);
   const combinedPlotRef = useRef<DualAxes | null>(null);
+  const destroyPlotRef = <T extends { destroy: () => void; destroyed?: boolean }>(
+    plotRef: React.MutableRefObject<T | null>,
+  ) => {
+    if (plotRef.current && !(plotRef.current as any).destroyed) {
+      plotRef.current.destroy();
+    }
+    plotRef.current = null;
+  };
 
   /**
    * 生成模拟的权益曲线数据
@@ -90,9 +98,7 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
     if (!equityChartRef.current || !task.resultSummary) return;
 
     // 销毁旧图表
-    if (equityPlotRef.current) {
-      equityPlotRef.current.destroy();
-    }
+    destroyPlotRef(equityPlotRef);
 
     const data = generateEquityData();
 
@@ -169,7 +175,7 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
     equityPlotRef.current = linePlot;
 
     return () => {
-      linePlot.destroy();
+      destroyPlotRef(equityPlotRef);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.resultSummary]);
@@ -181,9 +187,7 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
     if (!drawdownChartRef.current || !task.resultSummary) return;
 
     // 销毁旧图表
-    if (drawdownPlotRef.current) {
-      drawdownPlotRef.current.destroy();
-    }
+    destroyPlotRef(drawdownPlotRef);
 
     const data = generateDrawdownData();
 
@@ -262,7 +266,7 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
     drawdownPlotRef.current = linePlot;
 
     return () => {
-      linePlot.destroy();
+      destroyPlotRef(drawdownPlotRef);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.resultSummary]);
@@ -274,9 +278,7 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
     if (!combinedChartRef.current || !task.resultSummary) return;
 
     // 销毁旧图表
-    if (combinedPlotRef.current) {
-      combinedPlotRef.current.destroy();
-    }
+    destroyPlotRef(combinedPlotRef);
 
     const equityData = generateEquityData();
     const drawdownData = generateDrawdownData();
@@ -362,7 +364,7 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
     combinedPlotRef.current = dualAxesPlot;
 
     return () => {
-      dualAxesPlot.destroy();
+      destroyPlotRef(combinedPlotRef);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.resultSummary]);
@@ -449,4 +451,3 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
 };
 
 export default BacktestChartsCard;
-

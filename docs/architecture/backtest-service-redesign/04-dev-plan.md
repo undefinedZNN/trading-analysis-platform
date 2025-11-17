@@ -47,6 +47,13 @@
 
 > 时间基于 1~2 人全时投入估算，可根据团队资源调整。
 
+### 当前阶段进展（截至 2025-11-16）
+
+- Phase 0/1：完成架构确认、迁移清单与契约草稿，`libs/backtesting-contracts` 已提供 DTO/状态枚举并被主服务与 Worker 共享，`backtest-worker` Nest 基座（Health/Tasks Controller、ConfigModule、TaskStatusStore）运行稳定。
+- Phase 2：迁移 `backend/src/backtesting` 下策略/风控/账本/数据加载逻辑至 `backtest-worker/src/executor` 并通过 `TaskStatusStore` 与 `MainServiceReporter` 上报进度，`npm run test` 覆盖 4 个 suites（executor、data loader、task controller、status store）。
+- Phase 3（进行中）：主服务新增 `WorkerClientService`，`BacktestExecutorService` 可在 `BACKTEST_WORKER_ENABLED=true` 时优先派单给 Worker，并通过 `/backtesting/tasks/:taskId/progress|/result` 接收回调；已补充 `ServiceRegistryService`、Worker 注册/心跳与任务闭环（workerId 透传、进度/结果契约、调度重试/负载回收），新增 in-process 多 Worker e2e（`backend/src/backtesting/tasks/multi-worker-orchestration.e2e-spec.ts` + `npm run test:workers`）验证派单/心跳超时/取消全链路，同时提供真实进程演练手册 `05-worker-e2e-playbook.md` 与主/Worker `/metrics` 监控端点。当前 Worker 调度闭环已在主服务落地：`WorkerClientService` 根据注册表挑选实例、`TaskExecutorService` 记录 `assignedWorkerId`/转发取消命令、`BacktestTaskService` 持久化 `metricsSnapshot` 并在完成时释放负载；下一阶段聚焦性能与 UI 展示。
+- 下一步：按 `02-service-isolation.md:323-420` 的契约实现 Worker 注册/心跳、主服务调度策略（能力匹配 + 负载均衡）以及 Worker 端注册器与重试逻辑，随后迭代任务闭环与监控。
+
 ### 阶段任务拆解与引用
 
 > 如未特别说明，涉及 API/结构的详细设计可参考 `docs/architecture/backtest-service-redesign/02-service-isolation.md` 相应章节。
@@ -57,6 +64,39 @@
 - 产出共享契约草稿：列出需要在 `libs/backtesting-contracts` 中定义的 DTO、状态枚举、错误码（需要编写契约示例+单元测试草稿）。
 - 明确资源需求（端口、内存、日志目录）及环境变量表，为后续 ConfigModule 校验提供输入。
 
+##### Phase 0 输出（迁移清单 + 契约草稿）
+
+###### 迁移清单
+
+| 模块/路径 | 说明 | Worker 目标位置 | 注意点 |
+| --- | --- | --- | --- |
+| `backend/src/backtesting/execution` | 核心执行引擎、数据驱动循环、指标计算入口 | `backtest-worker/src/executor` | 参数化批量大小/窗口，接入 `TaskStatusStore`、记录指标 |
+| `backend/src/backtesting/strategies` & `strategy` | 策略工厂、策略接口、示例策略 | `backtest-worker/src/strategies` | 统一接口暴露 + 单元测试，确保热插拔 |
+| `backend/src/backtesting/data` | DuckDB/Parquet 数据加载、滑动窗口逻辑 | `backtest-worker/src/executor/data-loader.ts` 等 | 需要流式加载、内存阈值控制，mock 数据测试 |
+| `backend/src/backtesting/ledger` | 订单、持仓、资金曲线 | `backtest-worker/src/executor/ledger` | 复用实体定义，保证序列化结果与主服务一致 |
+| `backend/src/backtesting/risk` | 风控规则、仓位限制 | `backtest-worker/src/backtesting/risk` | 结合策略上下文评估订单，规则可通过任务配置启用/禁用 |
+| `backend/src/backtesting/analytics` | 指标计算、报告生成 | `backtest-worker/src/executor/analytics` | 输出结构应匹配主服务存储格式 |
+| `backend/src/backtesting/tasks` & `orchestrator` | 任务元数据、编排逻辑 | 拆分：主服务保留调度，Worker 仅保留执行入口 | 明确边界，更新文档/依赖 |
+| `backend/src/backtesting/events` | 进度/结果事件发布 | Worker 内部事件或回调 | 与 `TaskProgressEvent` 契约对齐，确保幂等 |
+| `backend/src/backtesting/utils` | 通用函数 | 根据用途拆至共享包或 Worker | 清理未使用函数，补充测试 |
+| `backend/src/backtesting/tests`、`__tests__`、`e2e-tests` | 单元 & e2e 测试 | Worker 专属测试、主服务契约测试 | 迁移后更新路径、断言，确保测试通过 |
+
+###### 契约草稿（位于 `libs/backtesting-contracts`）
+
+| DTO / 事件 | 说明 | 字段草案 | 引用位置 | 测试要求 |
+| --- | --- | --- | --- | --- |
+| `ExecuteTaskDto` | 主服务向 Worker 派发回测任务 | `taskId`, `config.strategyId`, `config.datasetId`, `timeRange`, `timeframe`, `parameters` | Worker `/execute`、主服务 `WorkerClientService` | DTO 验证单测，contract 测试请求体必填 |
+| `ExecuteTaskResponse` | Worker 确认任务接收 | `taskId`, `workerId`, `status`, `acceptedAt` | `/execute` 响应、任务队列 | e2e 测试覆盖 202/4xx |
+| `TaskStatusDto` | 查询任务当前状态 | `taskId`, `status`, `progress`, `metrics`, `updatedAt`, `error?`, `workerId?` | Worker `TaskStatusStore`、主服务查询 API | 单元测试涵盖状态流转；contract 测试响应结构 |
+| `TaskProgressEvent` | Worker 上报进度 | `taskId`, `workerId`, `progress`, `processedBars`, `totalBars`, `currentTime`, `metrics` | Worker → 主服务 `/api/internal/tasks/{id}/progress` | 集成测试验证字段完整性与幂等 |
+| `TaskResultDto` | 任务完成结果快照 | `taskId`, `workerId`, `summary`, `metrics`, `artifacts` | Worker 上传结果、主服务持久化 | e2e 测试验证结果落库 |
+| `CancelTaskDto` | 取消任务请求 | `taskId`, `reason?` | `/tasks/:taskId/cancel` | 单元测试覆盖合法/非法输入 |
+| `WorkerRegistrationDto` | Worker 注册参数 | `workerId`, `host`, `port`, `capabilities` | `/api/internal/workers/register` | DTO 验证单测 |
+| `WorkerHeartbeatDto` | 心跳/监控上报 | `workerId`, `status`, `currentLoad`, `metrics` | `/api/internal/workers/{id}/heartbeat` | 合约测试模拟 idle/busy/down |
+| `WorkerInfoDto` | 主服务对外展示信息 | `workerId`, `status`, `host`, `port`, `capabilities`, `lastHeartbeat` | 管理 API、监控面板 | 映射单测 |
+
+> 每个契约需提供至少一个验证测试 + 一个功能对齐环节（contract/e2e/集成）。迁移清单在 Phase 2 完成时逐条勾选，并在 Phase 5 验收复核。
+
 #### Phase 1 - 基座搭建
 - 创建 `backtest-worker` Nest 工程：`main.ts`、`WorkerModule`、`HealthController`、`TasksController`（参考 `02-service-isolation.md:66`、`:110`）。
 - 引入 `ConfigModule`、`HttpModule` 并实现配置 schema；编写配置单元测试（验证必填字段、默认值）。
@@ -64,16 +104,17 @@
 - 输出初版 `/health`、`/tasks/:id/status` 接口 contract test（可基于 Nest e2e 测试或 contract 工具）。
 
 #### Phase 2 - Worker 执行器迁移
-- 将 `backend/src/backtesting` 下的回测框架代码迁移/重构到 `backtest-worker/src/executor`，包括策略入口、数据加载器、内存管理和取消逻辑。
-- 接入 `TaskStatusStore`：执行开始/进度/完成/失败/取消时更新状态；添加与状态相关的单元测试。
+- 将 `backend/src/backtesting` 下的回测框架代码迁移/重构到 `backtest-worker/src/executor`，包括策略入口、数据加载器、内存管理和取消逻辑；Worker 通过 `TaskConfigDto.parameters` 支持主服务动态传入策略类型、初始资金、风险规则。
+- 接入 `TaskStatusStore`：执行开始/进度/完成/失败/取消时更新状态；在任务完成时写入执行指标（订单/成交/收益、Ledger 统计、账户权益），方便主服务展示结果；添加与状态相关的单元测试。
 - 根据 `02-service-isolation.md:110` 所述接口，确保 `/execute` 可异步执行并处理错误上报；编写 e2e 测试模拟任务执行。
 - 校准资源占用：补充内存/吞吐量基准测试，记录结果作为 Phase 2 的验收输入。
 
-#### Phase 3 - 主服务集成
-- 实现/完善 `ServiceRegistryService`、`WorkerClientService`、`BacktestOrchestrator` （参考 `02-service-isolation.md:323`、`:435`），确保与 Worker API 对齐。
-- 更新主服务 API/后台任务：任务创建、状态查询、取消流程调用新的 Worker 客户端；单元测试覆盖调度逻辑和错误处理。
-- 编写集成测试：模拟多个 Worker 心跳、任务派发与失败场景，验证任务自动重试/重分配。
-- 对齐 DTO：确保主服务引用的 DTO 全部来自 `libs/backtesting-contracts`，并通过 contract/pact 测试验证。
+#### Phase 3 - 主服务集成（进行中）
+- **Worker 注册 & 心跳**：实现 `ServiceRegistryService`、`WorkerRegistrationController`，遵循 `02-service-isolation.md:323-420` 的接口定义（`/api/internal/workers/register`、`/heartbeat`、`/deregister`），记录 host、端口、能力（支持策略/最大并发）、当前负载和最新心跳；提供过期清理与手动下线。
+- **Worker 端注册器**：在 `backtest-worker/src/executor/main-service-reporter.ts` 基础上扩展 `WorkerRegistrationService`，在启动时注册、按 `worker.reporting.heartbeatInterval` 心跳、退出前注销；失败时退避重试并写入结构化日志。
+- **调度与能力匹配**：`WorkerClientService` 根据注册表选择 Worker（Idle 优先，其次负载/能力匹配，必要时考虑数据 locality），无法匹配时回退到本地执行；调度策略需暴露 metrics 供监控（`runningTasks`、`avgLatency`）。
+- **任务透传 & 回调**：任务创建/取消/状态查询 API 统一通过 Orchestrator 派单；`BacktestTaskEntity.metricsSnapshot`（参考 `backend/src/backtesting/tasks`）用于持久化 Worker 回传指标，并确保 `TaskConfigDto.parameters` 完整透传策略参数、初始资金、风险规则。
+- **测试与验收**：新增 contract/e2e 测试模拟多 Worker 注册、节点失联、任务重试、回调鉴权缺失的容错路径；对关键 service（registry、client、worker-side registration）编写单元测试，确保异常/超时处理覆盖。
 
 #### Phase 4 - 运维与测试
 - 完成 `scripts/start-workers.sh`、`scripts/stop-workers.sh` 和 PM2/服务管理配置（`02-service-isolation.md:520` 起）；为脚本编写 smoke 测试或至少 dry-run 自检。
@@ -93,7 +134,7 @@
 | --- | --- | --- | --- | --- | --- |
 | W1 | 契约抽象 | 创建 `libs/backtesting-contracts` 并迁移 DTO/状态枚举 | 无 | 待定 | 新库 + 使用示例 |
 | W2 | Worker Nest 模板 | `main.ts`、`WorkerModule`、配置、Health/Tasks Controller | W1 | 待定 | 可运行 Worker 服务 |
-| W3 | TaskStatusStore & Executor | 迁移 `backend/src/backtesting` 中的回测框架（执行器、策略、内存管理等）并完善状态存储、执行流程、取消/失败处理 | W2 | 待定 | `BacktestExecutor` + 单元测试 |
+| W3 | TaskStatusStore & Executor | 迁移 `backend/src/backtesting` 中的回测框架（执行器、策略、内存管理等）并完善状态存储、执行流程、取消/失败处理；回测完成后输出策略/风险/账本指标 | W2 | 待定 | `BacktestExecutor` + 单元测试 |
 | W4 | 注册/心跳 | `WorkerRegistrationService`、心跳/注销逻辑 | W2 | 待定 | Worker 可在主服务注册表展示 |
 | W5 | Service Registry | 主服务 registry、清理、选择策略 | W1 | 待定 | Registry 服务及 API |
 | W6 | Worker Client & Orchestrator | 调度、取消、状态查询整合 | W5 | 待定 | 任务生命周期闭环 |
@@ -101,24 +142,23 @@
 | W8 | 监控 & 契约测试 | 指标采集、健康检查、Pact/contract tests | W2/W5 | 待定 | 监控仪表盘 + CI 断言 |
 | W9 | 演练与文档 | 故障演练、迁移指导、FAQ | 全部 | 待定 | 演练记录 + 运维手册 |
 
-## 5. 进度追踪模板
+## 5. 进度追踪
 
-| 工作包 | 状态 (Todo/In Progress/Blocked/Done) | 起止日期 | 备注 |
+| 工作包 | 状态 | 起止日期 | 备注 |
 | --- | --- | --- | --- |
-| W1 | Todo |  |  |
-| W2 | Todo |  |  |
-| W3 | Todo |  |  |
-| W4 | Todo |  |  |
-| W5 | Todo |  |  |
-| W6 | Todo |  |  |
-| W7 | Todo |  |  |
-| W8 | Todo |  |  |
-| W9 | Todo |  |  |
+| W1 - 契约抽象 | Done | 11/10 - 11/10 | `libs/backtesting-contracts` 已落地，DTO/状态枚举 + contract tests（参考 `libs/backtesting-contracts/__tests__`）。 |
+| W2 - Worker Nest 模板 | Done | 11/10 - 11/11 | `backtest-worker` 主干、Health/Tasks Controller、配置校验完成。 |
+| W3 - TaskStatusStore & Executor | Done | 11/11 - 11/14 | `backtest-worker/src/executor` 迁移 + 策略/风控/账本整合，含 `task-status.store.spec.ts`、`backtest-executor.spec.ts`。 |
+| W4 - 注册/心跳 | Todo | 11/16 - 11/18（计划） | 待实现 Worker 端注册器 + `/api/internal/workers/*` 控制面；需与配置/日志联动。 |
+| W5 - Service Registry | Todo | 11/16 - 11/19（计划） | 设计/实现 `ServiceRegistryService`、心跳超时清理、能力/负载模型；与 ORM/缓存集成待定。 |
+| W6 - Worker Client & Orchestrator | In Progress | 11/13 - 11/20 | Worker Client/Orchestrator 已完成 worker 注册表接入、智能调度/重试、任务回调闭环（派单选路、取消转发、`assignedWorkerId`/`metricsSnapshot` 持久化），并补充多 Worker e2e（`npm run test:workers`）+ 真实进程演练手册 `05-worker-e2e-playbook.md`；待补性能压测与 UI 展示。 |
+| W7 - 运维脚本/PM2 | Todo | 11/20 - 11/22（计划） | 启停脚本、PM2 ecosystem、smoke 测试未启动。 |
+| W8 - 监控 & 契约测试 | Todo | 11/22 - 11/24（计划） | 需补 metrics 暴露、Pact/contract pipeline。 |
+| W9 - 演练与文档 | Todo | 11/24 - 11/25（计划） | 故障演练、运维手册、FAQ 暂未开始。 |
 
 更新规则：
-- 每日站会后更新状态与风险。
-- 若状态变为 Blocked，需要注明阻塞原因与协助人。
-- 交付物验收后将状态置为 Done，并在备注中链接 PR/测试报告。
+- 每日站会后同步状态与风险，如状态 Blocked 需注明原因/协助人。
+- 交付后将状态置为 Done，并在备注中加入 PR/测试报告等引用。
 
 ## 6. 风险与缓解
 

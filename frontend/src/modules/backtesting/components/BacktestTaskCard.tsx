@@ -188,6 +188,23 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
     return value.toLocaleString();
   };
 
+  const metricsSnapshot = task.metricsSnapshot as Record<string, any> | undefined;
+  const metricsPreview = metricsSnapshot
+    ? Object.entries(metricsSnapshot)
+        .filter(([, value]) => value !== undefined && value !== null)
+        .slice(0, 3)
+    : [];
+
+  const formatMetricValue = (value: unknown) => {
+    if (typeof value === 'number') {
+      return value.toFixed(2).replace(/\.00$/, '');
+    }
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
+    return String(value);
+  };
+
   const statusConfig = getStatusConfig(task.status);
 
   return (
@@ -216,6 +233,18 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
           </Tag>
         </div>
       </div>
+
+      {/* Worker & 指标 */}
+      <Space wrap size="small" style={{ marginBottom: 12 }}>
+        <Tag color="geekblue">
+          Worker: {task.assignedWorkerId || '未分配 / 本地执行'}
+        </Tag>
+        {metricsPreview.map(([key, value]) => (
+          <Tag color="cyan" key={key}>
+            {key}: {formatMetricValue(value)}
+          </Tag>
+        ))}
+      </Space>
 
       {/* 进度条（运行中时显示） */}
       {task.status === BacktestTaskStatus.RUNNING && task.progress !== undefined && (
@@ -274,7 +303,10 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
               </span>
             </Item>
             <Item label="夏普比率">
-              {task.resultSummary.sharpeRatio.toFixed(2)}
+              {task.resultSummary.sharpeRatio !== undefined &&
+              task.resultSummary.sharpeRatio !== null
+                ? task.resultSummary.sharpeRatio.toFixed(2)
+                : '-'}
             </Item>
             <Item label="交易次数">
               {formatNumber(task.resultSummary.totalTrades)}
@@ -283,7 +315,10 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
               {formatPercent(task.resultSummary.winRate)}
             </Item>
             <Item label="盈亏比">
-              {task.resultSummary.profitLossRatio.toFixed(2)}
+              {task.resultSummary.profitLossRatio !== undefined &&
+              task.resultSummary.profitLossRatio !== null
+                ? task.resultSummary.profitLossRatio.toFixed(2)
+                : '-'}
             </Item>
           </Descriptions>
         </div>

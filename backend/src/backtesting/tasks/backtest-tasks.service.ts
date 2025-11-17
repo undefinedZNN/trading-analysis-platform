@@ -10,6 +10,8 @@ import {
   UpdateBacktestTaskDto,
   ListBacktestTasksDto,
 } from './dto';
+import { ServiceRegistryService } from '../service-registry/service-registry.service';
+import { BacktestMetricsService } from '../monitoring/backtest-metrics.service';
 
 /**
  * 回测任务服务
@@ -23,6 +25,8 @@ export class BacktestTasksService {
   constructor(
     @InjectRepository(BacktestTaskEntity)
     private readonly backtestTaskRepository: Repository<BacktestTaskEntity>,
+    private readonly serviceRegistry: ServiceRegistryService,
+    private readonly metrics?: BacktestMetricsService,
   ) {}
 
   /**
@@ -217,6 +221,7 @@ export class BacktestTasksService {
   ): Promise<BacktestTaskEntity> {
     const task = await this.findOne(taskId);
 
+    const previousStatus = task.status;
     task.status = status;
 
     // 根据状态更新时间戳
@@ -236,6 +241,7 @@ export class BacktestTasksService {
     const updatedTask = await this.backtestTaskRepository.save(task);
     
     this.logger.log(`Backtest task status updated: ${taskId} -> ${status}`);
+    this.metrics?.recordTaskStatusChange(previousStatus, status);
     return updatedTask;
   }
 
@@ -258,6 +264,60 @@ export class BacktestTasksService {
     
     this.logger.debug(`Task progress updated: ${taskId} -> ${progress}%`);
     return updatedTask;
+  }
+
+  async updateProgressFromWorker(
+    taskId: string,
+    payload: { progress?: number; metrics?: any; workerId?: string },
+  ) {
+    const task = await this.findOne(taskId);
+    const normalizedProgress = Math.round(
+      Math.min(Math.max((payload?.progress ?? 0) * 100, 0), 100),
+    );
+    const assignedWorkerId = payload?.workerId ?? task.assignedWorkerId ?? null;
+
+    if (
+      payload?.workerId &&
+      task.assignedWorkerId &&
+      payload.workerId !== task.assignedWorkerId
+    ) {
+      this.logger.warn(
+        `Worker mismatch for task ${taskId}: assigned=${task.assignedWorkerId}, incoming=${payload.workerId}`,
+      );
+    }
+
+    await this.backtestTaskRepository.update(
+      { taskId },
+      {
+        progress: normalizedProgress,
+        metricsSnapshot: payload?.metrics ?? task.metricsSnapshot ?? null,
+        assignedWorkerId,
+        startedAt: task.startedAt ?? new Date(),
+        status:
+          task.status === BacktestTaskStatus.PENDING ? BacktestTaskStatus.RUNNING : task.status,
+      },
+    );
+    this.metrics?.recordTaskProgress(normalizedProgress);
+  }
+
+  async completeFromWorker(
+    taskId: string,
+    payload: { status?: string; metrics?: any; summary?: any; workerId?: string },
+  ) {
+    const task = await this.findOne(taskId);
+    const finalStatus = this.mapWorkerStatus(payload?.status, task.status);
+    const updateData: Partial<BacktestTaskEntity> = {
+      metricsSnapshot: payload?.metrics ?? task.metricsSnapshot ?? null,
+      assignedWorkerId: null,
+    };
+
+    if (finalStatus === BacktestTaskStatus.COMPLETED) {
+      updateData.resultSummary = payload?.summary ?? task.resultSummary ?? null;
+      updateData.progress = 100;
+    }
+
+    await this.updateStatus(taskId, finalStatus, updateData);
+    this.releaseWorkerCapacity(payload?.workerId ?? task.assignedWorkerId ?? undefined);
   }
 
   /**
@@ -341,5 +401,28 @@ export class BacktestTasksService {
 
     return this.create(config, userId);
   }
-}
 
+  private mapWorkerStatus(
+    reportedStatus: string | undefined,
+    currentStatus: BacktestTaskStatus,
+  ): BacktestTaskStatus {
+    if (currentStatus === BacktestTaskStatus.CANCELLED) {
+      return BacktestTaskStatus.CANCELLED;
+    }
+    switch (reportedStatus) {
+      case 'failed':
+        return BacktestTaskStatus.FAILED;
+      case 'cancelled':
+        return BacktestTaskStatus.CANCELLED;
+      default:
+        return BacktestTaskStatus.COMPLETED;
+    }
+  }
+
+  private releaseWorkerCapacity(workerId?: string) {
+    if (!workerId) {
+      return;
+    }
+    this.serviceRegistry.updateLoad(workerId, -1);
+  }
+}

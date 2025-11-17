@@ -1,17 +1,19 @@
 import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Delete,
   Body,
-  Param,
-  Query,
+  Controller,
+  Delete,
+  Get,
+  Headers,
   HttpCode,
   HttpStatus,
-  ParseUUIDPipe,
-  ValidationPipe,
   Logger,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UnauthorizedException,
+  ValidationPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -34,6 +36,8 @@ import {
   UpdateBacktestTaskDto,
   ListBacktestTasksDto,
   ListTaskLogsDto,
+  WorkerProgressDto,
+  WorkerResultDto,
 } from './dto';
 import { BacktestTaskEntity, TaskLogEntity } from './entities';
 
@@ -52,6 +56,13 @@ export class BacktestTasksController {
     private readonly taskLogsService: TaskLogsService,
     private readonly taskExecutorService: TaskExecutorService,
   ) {}
+
+  private verifyWorkerToken(token?: string) {
+    const expected = process.env.BACKTEST_WORKER_SHARED_SECRET;
+    if (expected && token !== expected) {
+      throw new UnauthorizedException('Invalid worker token');
+    }
+  }
 
   /**
    * 创建回测任务
@@ -145,6 +156,11 @@ export class BacktestTasksController {
             taskName: '双均线策略回测-2024全年',
             status: 'running',
             progress: 45,
+            assignedWorkerId: 'worker-1',
+            metricsSnapshot: {
+              runningTasks: 1,
+              throughput: 1200,
+            },
             createdAt: '2025-11-12T10:30:00Z',
             startedAt: '2025-11-12T10:31:00Z',
           },
@@ -259,6 +275,7 @@ export class BacktestTasksController {
   async cancel(
     @Param('taskId', ParseUUIDPipe) taskId: string,
   ): Promise<BacktestTaskEntity> {
+    await this.taskExecutorService.cancelTask(taskId);
     return await this.backtestTasksService.cancel(taskId);
   }
 
@@ -484,5 +501,30 @@ export class BacktestTasksController {
       taskId,
     };
   }
-}
 
+  @Post(':taskId/progress')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Worker 回调：更新任务进度' })
+  async updateProgress(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Body() payload: WorkerProgressDto,
+    @Headers('x-worker-key') workerKey?: string,
+  ): Promise<{ status: string }> {
+    this.verifyWorkerToken(workerKey);
+    await this.backtestTasksService.updateProgressFromWorker(taskId, payload);
+    return { status: 'accepted' };
+  }
+
+  @Post(':taskId/result')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Worker 回调：任务完成' })
+  async submitResult(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Body() payload: WorkerResultDto,
+    @Headers('x-worker-key') workerKey?: string,
+  ): Promise<{ status: string }> {
+    this.verifyWorkerToken(workerKey);
+    await this.backtestTasksService.completeFromWorker(taskId, payload);
+    return { status: 'accepted' };
+  }
+}

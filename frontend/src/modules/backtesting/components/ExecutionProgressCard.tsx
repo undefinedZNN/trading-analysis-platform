@@ -25,6 +25,24 @@ interface ExecutionProgressCardProps {
 export const ExecutionProgressCard: React.FC<ExecutionProgressCardProps> = ({
   task,
 }) => {
+  const metricsSnapshot = task.metricsSnapshot as Record<string, any> | undefined;
+  const runningTasks =
+    typeof metricsSnapshot?.runningTasks === 'number'
+      ? metricsSnapshot.runningTasks
+      : undefined;
+  const throughput =
+    typeof metricsSnapshot?.throughput === 'number'
+      ? metricsSnapshot.throughput
+      : undefined;
+  const memoryUsed =
+    typeof metricsSnapshot?.memoryUsed === 'number'
+      ? metricsSnapshot.memoryUsed
+      : undefined;
+  const lastUpdatedLabel =
+    typeof metricsSnapshot?.lastUpdated === 'string'
+      ? dayjs(metricsSnapshot.lastUpdated).format('YYYY-MM-DD HH:mm:ss')
+      : undefined;
+
   /**
    * 计算执行时长
    */
@@ -140,6 +158,39 @@ export const ExecutionProgressCard: React.FC<ExecutionProgressCardProps> = ({
               />
             </Col>
           )}
+
+          {runningTasks !== undefined && (
+            <Col span={8}>
+              <Statistic
+                title="Worker 负载"
+                value={runningTasks}
+                suffix="tasks"
+                valueStyle={{ fontSize: 16 }}
+              />
+            </Col>
+          )}
+
+          {throughput !== undefined && (
+            <Col span={8}>
+              <Statistic
+                title="吞吐量"
+                value={throughput.toFixed(1)}
+                suffix="bars/s"
+                valueStyle={{ fontSize: 16 }}
+              />
+            </Col>
+          )}
+
+          {memoryUsed !== undefined && (
+            <Col span={8}>
+              <Statistic
+                title="内存使用"
+                value={memoryUsed.toFixed(1)}
+                suffix="MB"
+                valueStyle={{ fontSize: 16 }}
+              />
+            </Col>
+          )}
         </Row>
 
         {/* 实时状态提示 */}
@@ -155,6 +206,7 @@ export const ExecutionProgressCard: React.FC<ExecutionProgressCardProps> = ({
             <span style={{ color: '#1890ff' }}>●</span>
             <span style={{ color: '#1890ff', fontSize: 14 }}>
               任务正在执行中，进度每分钟自动更新
+              {lastUpdatedLabel && `（最近更新：${lastUpdatedLabel}）`}
             </span>
           </Space>
         </div>
@@ -164,4 +216,3 @@ export const ExecutionProgressCard: React.FC<ExecutionProgressCardProps> = ({
 };
 
 export default ExecutionProgressCard;
-

@@ -22,7 +22,10 @@
       "@config/*": ["src/config/*"],
       "@modules/*": ["src/modules/*"],
       "@common/*": ["src/common/*"],
-      "@entities/*": ["src/entities/*"]
+      "@entities/*": ["src/entities/*"],
+      "@trading-platform/backtesting-contracts": ["../libs/backtesting-contracts/src"],
+      "class-validator": ["node_modules/class-validator"],
+      "class-transformer": ["node_modules/class-transformer"]
     }
   },
   "exclude": [
