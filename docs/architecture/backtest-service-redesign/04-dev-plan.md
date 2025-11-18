@@ -54,6 +54,12 @@
 - Phase 3（进行中）：主服务新增 `WorkerClientService`，`BacktestExecutorService` 可在 `BACKTEST_WORKER_ENABLED=true` 时优先派单给 Worker，并通过 `/backtesting/tasks/:taskId/progress|/result` 接收回调；已补充 `ServiceRegistryService`、Worker 注册/心跳与任务闭环（workerId 透传、进度/结果契约、调度重试/负载回收），新增 in-process 多 Worker e2e（`backend/src/backtesting/tasks/multi-worker-orchestration.e2e-spec.ts` + `npm run test:workers`）验证派单/心跳超时/取消全链路，同时提供真实进程演练手册 `05-worker-e2e-playbook.md` 与主/Worker `/metrics` 监控端点。当前 Worker 调度闭环已在主服务落地：`WorkerClientService` 根据注册表挑选实例、`TaskExecutorService` 记录 `assignedWorkerId`/转发取消命令、`BacktestTaskService` 持久化 `metricsSnapshot` 并在完成时释放负载；下一阶段聚焦性能与 UI 展示。
 - 下一步：按 `02-service-isolation.md:323-420` 的契约实现 Worker 注册/心跳、主服务调度策略（能力匹配 + 负载均衡）以及 Worker 端注册器与重试逻辑，随后迭代任务闭环与监控。
 
+### 动态脚本 MVP（新增）
+
+- 在 `script_versions` 表新增 `compiled_code`/`compiled_at` 字段，创建或更新脚本版本时即通过统一的编译器（ts.transpile + CommonJS）生成 `compiledCode` 并持久化，保留原始源码用于展示/审计。
+- `TaskExecutorService` 构建 Worker payload 时随任务透传 `scriptVersionId`、`versionName` 与 `compiledCode`；`libs/backtesting-contracts` 新增 `TaskConfig.script` 字段保证主/Worker 契约一致。
+- Worker 增加 `DynamicStrategyExecutor`，利用 Node VM 加载 `compiledCode`，注入精简版 `@platform/backtesting-sdk` stub 与统一的 `ctx` API（`getParameters`、`getCurrentBar`、`setState`、`submitOrder`、`recordMetrics` 等），并复用现有执行器/风控/账本管线。当前阶段仅实现基本执行逻辑，沙箱隔离与监控告警将在后续阶段补齐。
+
 ### 阶段任务拆解与引用
 
 > 如未特别说明，涉及 API/结构的详细设计可参考 `docs/architecture/backtest-service-redesign/02-service-isolation.md` 相应章节。

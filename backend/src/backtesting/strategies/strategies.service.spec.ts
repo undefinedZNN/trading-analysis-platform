@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { DiffScriptVersionDto } from './dto/diff-script-version.dto';
 import { StrategyScriptValidator } from './strategy-script.validator';
+import { StrategyScriptCompiler } from './strategy-script.compiler';
 
 type MockRepository<T = any> = Partial<Record<keyof Repository<T>, jest.Mock>> & {
   createQueryBuilder?: jest.Mock;
@@ -88,6 +89,14 @@ describe('StrategiesService', () => {
               errors: [],
               warnings: [],
             }),
+          },
+        },
+        {
+          provide: StrategyScriptCompiler,
+          useValue: {
+            compile: jest.fn().mockImplementation((code: string) => ({
+              compiledCode: `compiled:${code}`,
+            })),
           },
         },
       ],

@@ -32,6 +32,12 @@ export class ScriptVersionEntity {
   @Column({ name: 'code', type: 'text' })
   code!: string;
 
+  @Column({ name: 'compiled_code', type: 'text', nullable: true })
+  compiledCode?: string | null;
+
+  @Column({ name: 'compiled_at', type: 'timestamptz', nullable: true })
+  compiledAt?: Date | null;
+
   @Column({ name: 'parameter_schema', type: 'jsonb', default: () => `'[]'::jsonb` })
   parameterSchema!: unknown;
 

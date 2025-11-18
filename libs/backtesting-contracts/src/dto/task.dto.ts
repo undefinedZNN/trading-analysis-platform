@@ -31,6 +31,24 @@ export class TimeRangeDto {
   end!: string;
 }
 
+export class ScriptMetadataDto {
+  @IsString()
+  @IsNotEmpty()
+  scriptVersionId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  compiledCode!: string;
+
+  @IsOptional()
+  @IsString()
+  strategyId?: string;
+
+  @IsOptional()
+  @IsString()
+  versionName?: string;
+}
+
 export class TaskConfigDto {
   @IsString()
   @IsNotEmpty()
@@ -51,6 +69,11 @@ export class TaskConfigDto {
   @IsObject()
   @IsOptional()
   parameters?: Record<string, unknown>;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ScriptMetadataDto)
+  script?: ScriptMetadataDto;
 }
 
 export class ExecuteTaskDto {

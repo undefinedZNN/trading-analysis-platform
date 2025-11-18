@@ -22,6 +22,7 @@ import {
   ScriptValidationMessage,
   StrategyScriptValidator,
 } from './strategy-script.validator';
+import { StrategyScriptCompiler } from './strategy-script.compiler';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;
@@ -35,6 +36,7 @@ export class StrategiesService {
     private readonly scriptVersionRepository: Repository<ScriptVersionEntity>,
     private readonly scriptParser: StrategyScriptParser,
     private readonly scriptValidator: StrategyScriptValidator,
+    private readonly scriptCompiler: StrategyScriptCompiler,
   ) { }
 
   async listStrategies(query: ListStrategiesDto) {
@@ -138,6 +140,8 @@ export class StrategiesService {
       updatedAt: version.updatedAt,
       createdAt: version.createdAt,
       remark: version.remark,
+      compiledCode: version.compiledCode,
+      compiledAt: version.compiledAt,
       code: version.code,
       parameterSchema: version.parameterSchema,
       factorSchema: version.factorSchema,
@@ -174,6 +178,8 @@ export class StrategiesService {
         isMaster: version.isMaster,
         remark: version.remark,
         code: version.code,
+        compiledCode: version.compiledCode,
+        compiledAt: version.compiledAt,
         parameterSchema: version.parameterSchema,
         factorSchema: version.factorSchema,
         createdAt: version.createdAt,
@@ -233,7 +239,6 @@ export class StrategiesService {
     dto: CreateScriptVersionDto,
   ) {
     await this.assertStrategyExists(strategyId);
-    console.log('createScriptVersion==========', 1);
     const strategyVersions =
       await this.scriptVersionRepository.find({
         where: { strategyId },
@@ -244,16 +249,13 @@ export class StrategiesService {
         },
       });
 
-    console.log('createScriptVersion==========', 2, strategyVersions);
     const existingNames = strategyVersions.map(
       (item) => item.versionName,
     );
-    console.log('createScriptVersion==========', 3, existingNames);
     const versionName =
       dto.versionName?.trim() ||
       generateVersionName(existingNames);
 
-    console.log('createScriptVersion==========', 4, versionName);
     if (existingNames.includes(versionName)) {
       throw new ConflictException('版本号已存在，请更换');
     }
@@ -265,7 +267,6 @@ export class StrategiesService {
       dto.isMaster ?? false,
     );
 
-    console.log('createScriptVersion==========', 5, version);
     if (dto.isMaster) {
       await this.setMasterVersion(strategyId, version.scriptVersionId);
     }
@@ -290,9 +291,12 @@ export class StrategiesService {
     if (dto.code !== undefined) {
       await this.ensureScriptValid(dto.code);
       const schemas = this.scriptParser.parse(dto.code);
+      const compiled = this.scriptCompiler.compile(dto.code);
       updatePayload.code = dto.code;
       updatePayload.parameterSchema = schemas.parameters;
       updatePayload.factorSchema = schemas.factors;
+      updatePayload.compiledCode = compiled.compiledCode;
+      updatePayload.compiledAt = new Date();
     }
 
     if (dto.versionName) {
@@ -432,14 +436,17 @@ export class StrategiesService {
     }
 
     await this.ensureScriptValid(dto.code);
-
     const schemas = this.scriptParser.parse(dto.code);
+    const compiled = this.scriptCompiler.compile(dto.code);
+    const compiledAt = new Date();
 
     const version = this.scriptVersionRepository.create({
       strategyId,
       versionName: dto.versionName ?? generateVersionName(),
       isMaster,
       code: dto.code,
+      compiledCode: compiled.compiledCode,
+      compiledAt,
       parameterSchema: schemas.parameters,
       factorSchema: schemas.factors,
       remark: dto.remark ?? null,

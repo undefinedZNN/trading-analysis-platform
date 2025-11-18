@@ -277,6 +277,21 @@ export class TaskExecutorService {
       datasetAvailableGranularities: dataset.availableGranularities ?? [],
     };
 
+    const scriptPayload = version.compiledCode
+      ? {
+          scriptVersionId: version.scriptVersionId,
+          compiledCode: version.compiledCode,
+          strategyId: strategy.strategyId,
+          versionName: version.versionName,
+        }
+      : undefined;
+
+    if (!scriptPayload) {
+      this.logger.warn(
+        `Script version ${version.scriptVersionId} missing compiled code, falling back to built-in strategy resolution.`,
+      );
+    }
+
     return {
       taskId: task.taskId,
       config: {
@@ -288,6 +303,7 @@ export class TaskExecutorService {
           end: this.asIsoString(timeRange.end),
         },
         parameters,
+        script: scriptPayload,
       },
     };
   }

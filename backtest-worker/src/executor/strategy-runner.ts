@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { TaskConfigDto } from '@trading-platform/backtesting-contracts';
+import { TaskConfigDto, ScriptMetadataDto } from '@trading-platform/backtesting-contracts';
 import { nanoid } from 'nanoid';
 import { HistoricalBar } from './interfaces';
 import { ExecutionEngineImpl } from '../backtesting/execution/engine';
@@ -31,16 +31,21 @@ import { LedgerServiceImpl } from '../backtesting/ledger/service';
 import { TradeRecord, TradeStats } from '../backtesting/ledger/interfaces';
 import { RiskEngineImpl } from '../backtesting/risk/engine';
 import { RiskDecisionResult } from '../backtesting/risk/interfaces';
+import {
+  DynamicStrategyExecutor,
+  LoadedDynamicStrategy,
+} from '../backtesting/strategies/dynamic-strategy.executor';
 
 type StrategyType =
   | 'ma-cross'
   | 'bollinger-bands'
   | 'rsi-mean-reversion'
-  | 'three-line-momentum';
+  | 'three-line-momentum'
+  | 'dynamic';
 
 interface StrategyLifecycle {
-  onInit?: () => void;
-  onBar: (bar: any) => void;
+  onInit?: () => void | Promise<void>;
+  onBar: (bar: any) => void | Promise<void>;
 }
 
 interface StrategyIntentInput {
@@ -64,6 +69,9 @@ interface StrategySession {
   context: StrategyContextImpl;
   priceHistory: number[];
   lastPrice: number;
+  scriptState: unknown;
+  currentBar: HistoricalBar | null;
+  dynamicStrategy?: LoadedDynamicStrategy | null;
   account: {
     cash: number;
     positionQty: number;
@@ -114,11 +122,54 @@ class StrategyContextImpl {
     return this.runner.getEquity(this.session).toFixed(2);
   }
 
+  getParameters<T = Record<string, any>>(): T {
+    return (this.session?.params as T) ?? ({} as T);
+  }
+
+  getState<T = any>(): T | null {
+    return (this.session?.scriptState as T) ?? null;
+  }
+
+  setState(state: unknown): void {
+    if (this.session) {
+      this.session.scriptState = state;
+    }
+  }
+
+  setCurrentBar(bar: HistoricalBar | null) {
+    if (this.session) {
+      this.session.currentBar = bar;
+    }
+  }
+
+  getCurrentBar(): HistoricalBar | null {
+    return this.session?.currentBar ?? null;
+  }
+
+  getTaskConfig(): TaskConfigDto | undefined {
+    return this.session?.config;
+  }
+
   publishIntent(intent: StrategyIntentInput): void {
     if (!this.session) {
       return;
     }
     void this.runner.dispatchIntent(this.session, intent);
+  }
+
+  submitOrder(intent: StrategyIntentInput): void {
+    this.publishIntent(intent);
+  }
+
+  recordMetrics(
+    nameOrPayload: string | Record<string, unknown>,
+    payload?: Record<string, unknown>,
+  ) {
+    if (typeof nameOrPayload === 'string') {
+      this.metrics(nameOrPayload, payload ?? {});
+      return;
+    }
+    this.metrics('custom', nameOrPayload);
   }
 }
 
@@ -128,12 +179,15 @@ export class StrategyRunner {
   private readonly sessions = new Map<string, StrategySession>();
   private readonly metricsLoggingEnabled: boolean;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly dynamicStrategyExecutor: DynamicStrategyExecutor,
+  ) {
     this.metricsLoggingEnabled = this.configService.get<boolean>('worker.logging.metrics', false);
   }
 
   async runChunk(taskId: string, config: TaskConfigDto, bars: HistoricalBar[]): Promise<void> {
-    const session = this.ensureSession(taskId, config);
+    const session = await this.ensureSession(taskId, config);
 
     for (const bar of bars) {
       session.lastPrice = bar.close;
@@ -142,8 +196,9 @@ export class StrategyRunner {
         session.priceHistory.shift();
       }
 
+      session.context.setCurrentBar(bar);
       const enrichedBar = this.enrichBarWithFeatures(session, bar);
-      session.strategy.onBar(enrichedBar);
+      await Promise.resolve(session.strategy.onBar(enrichedBar));
       await session.engine.processBars([this.toBarEvent(config, bar)]);
     }
   }
@@ -185,14 +240,24 @@ export class StrategyRunner {
     }
   }
 
-  private ensureSession(taskId: string, config: TaskConfigDto): StrategySession {
+  private async ensureSession(taskId: string, config: TaskConfigDto): Promise<StrategySession> {
     const existing = this.sessions.get(taskId);
     if (existing) {
       return existing;
     }
 
-    const strategyType = this.resolveStrategyType(config);
-    const params = this.resolveStrategyParams(strategyType, config.parameters || {});
+    const scriptPayload: ScriptMetadataDto | undefined = (config as any).script;
+    const hasDynamicScript =
+      typeof scriptPayload?.compiledCode === 'string' &&
+      scriptPayload.compiledCode.trim().length > 0;
+
+    const strategyType: StrategyType = hasDynamicScript
+      ? 'dynamic'
+      : this.resolveStrategyType(config);
+    const params = hasDynamicScript
+      ? { ...(config.parameters || {}) }
+      : this.resolveStrategyParams(strategyType, config.parameters || {});
+
     this.logger.log(
       `Initializing strategy for task ${taskId}: type=${strategyType}, strategyId=${config.strategyId}`,
       params,
@@ -204,9 +269,9 @@ export class StrategyRunner {
       strategyId: config.strategyId,
       marketFillPolicy: 'close',
       trackPositions: true,
-      logger: (level, message, meta) => {
-        return
-        this.logger.debug(`[${taskId}] ${message}`, meta)
+      logger: (_level, message, meta) => {
+        return;
+        this.logger.debug(`[${taskId}] ${message}`, meta);
       },
     };
 
@@ -215,18 +280,18 @@ export class StrategyRunner {
       sessionId: engineConfig.sessionId,
       strategyId: config.strategyId,
       simulationMode: true,
-      logger: (level, message, meta) => {
+      logger: (_level, message, meta) => {
         return;
-        this.logger.debug(`[Risk ${taskId}] ${message}`, { level, ...meta })
-      }
+        this.logger.debug(`[Risk ${taskId}] ${message}`, meta);
+      },
     });
     const ledger = new LedgerServiceImpl({
       sessionId: engineConfig.sessionId,
       strategyId: config.strategyId,
       bufferSize: 500,
-      logger: (level, message, meta) => {
+      logger: (_level, message, meta) => {
         return;
-        this.logger.debug(`[Ledger ${taskId}] ${message}`, { level, ...meta })
+        this.logger.debug(`[Ledger ${taskId}] ${message}`, meta);
       },
     });
 
@@ -239,10 +304,12 @@ export class StrategyRunner {
       engine,
       riskEngine,
       ledger,
-      strategy: this.createStrategyInstance(strategyType, params, context),
+      strategy: {} as StrategyLifecycle,
       context,
       priceHistory: [],
       lastPrice: Number(config.parameters?.initialPrice ?? 100),
+      scriptState: null,
+      currentBar: null,
       account: {
         cash: Number(config.parameters?.initialCapital ?? 10000),
         positionQty: 0,
@@ -251,8 +318,13 @@ export class StrategyRunner {
       },
     };
 
+    const strategyInstance = hasDynamicScript && scriptPayload
+      ? this.createDynamicStrategy(scriptPayload, context, session)
+      : this.createStrategyInstance(strategyType, params, context);
+
+    session.strategy = strategyInstance;
     context.bindSession(session);
-    session.strategy.onInit?.();
+    await Promise.resolve(session.strategy.onInit?.());
 
     engine.setEventCallbacks({
       onExecutionReport: (report) =>
@@ -292,6 +364,9 @@ export class StrategyRunner {
   }
 
   private resolveStrategyParams(type: StrategyType, overrides: Record<string, any>) {
+    if (type === 'dynamic') {
+      return { ...overrides };
+    }
     const defs =
       type === 'bollinger-bands'
         ? bollParameters
@@ -324,6 +399,24 @@ export class StrategyRunner {
       default:
         return new MACrossStrategy(params, context);
     }
+  }
+
+  private createDynamicStrategy(
+    script: ScriptMetadataDto,
+    context: StrategyContextImpl,
+    session: StrategySession,
+  ): StrategyLifecycle {
+    const definition = this.dynamicStrategyExecutor.load(script.compiledCode);
+    session.dynamicStrategy = definition;
+    const runtimeContext = context as unknown as Record<string, unknown>;
+    return {
+      onInit: () => {
+        if (typeof definition.onInit === 'function') {
+          return Promise.resolve(definition.onInit(runtimeContext));
+        }
+      },
+      onBar: () => Promise.resolve(definition.run(runtimeContext)),
+    };
   }
 
   async dispatchIntent(session: StrategySession, intent: StrategyIntentInput) {

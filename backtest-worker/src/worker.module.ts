@@ -15,6 +15,7 @@ import { ParquetDataProviderService } from './data/parquet-data-provider.service
 import { MainServiceReporter } from './executor/main-service-reporter';
 import { WorkerMetricsService } from './monitoring/worker-metrics.service';
 import { WorkerMetricsController } from './monitoring/metrics.controller';
+import { DynamicStrategyExecutor } from './backtesting/strategies/dynamic-strategy.executor';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { WorkerMetricsController } from './monitoring/metrics.controller';
     BacktestExecutor,
     WorkerRegistrationService,
     WorkerMetricsService,
+    DynamicStrategyExecutor,
   ],
 })
 export class WorkerModule {}
