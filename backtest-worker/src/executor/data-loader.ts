@@ -52,6 +52,7 @@ export class HistoricalDataLoader {
 
   private async *streamFromProvider(config: TaskConfigDto, signal?: AbortSignal) {
     const request = this.buildFetchRequest(config);
+    this.logger.log(`Stream from provider request ==============================================: ${JSON.stringify(request)}`);
     const chunkSize = this.configService.get<number>('worker.execution.batchSize', 20_000);
     const buffer: HistoricalBar[] = [];
     let completed = false;

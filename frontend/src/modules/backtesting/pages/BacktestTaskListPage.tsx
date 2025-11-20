@@ -60,7 +60,6 @@ export const BacktestTaskListPage: React.FC = () => {
   
   // 数据集列表
   const [datasets, setDatasets] = useState<DatasetDto[]>([]);
-  const [loadingDatasets, setLoadingDatasets] = useState(false);
   
   // 创建任务模态框
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -107,7 +106,6 @@ export const BacktestTaskListPage: React.FC = () => {
    */
   const loadDatasets = async () => {
     try {
-      setLoadingDatasets(true);
       logEvent('开始加载数据集列表');
       const response = await listDatasets({ pageSize: 100 });  // 使用合理的限制
       setDatasets(response.items);
@@ -115,8 +113,6 @@ export const BacktestTaskListPage: React.FC = () => {
     } catch (error: any) {
       console.error('[BacktestTasks] 加载数据集列表失败', error);
       message.error('加载数据集列表失败: ' + error.message);
-    } finally {
-      setLoadingDatasets(false);
     }
   };
 

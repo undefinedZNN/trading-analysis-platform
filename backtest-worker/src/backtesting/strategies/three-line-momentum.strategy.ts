@@ -144,11 +144,22 @@ export class ThreeLineMomentumStrategy {
       stopPrice: this.state.activeTrade.stopPrice,
     });
 
+    const tradePlan = {
+      entryPrice: this.state.activeTrade.entryPrice,
+      exitPrice: referencePrice.toFixed(6),
+      stopPrice: this.state.activeTrade.stopPrice,
+      targetPrice: this.state.activeTrade.targetPrice,
+      barTimestamp: bar.timestamp,
+    };
+
     this.context.publishIntent({
       type: 'market',
       side: 'sell',
       quantity: 'all',
       reason,
+      metadata: {
+        tradePlan,
+      },
     });
 
     this.state.position = 'none';
@@ -203,11 +214,21 @@ export class ThreeLineMomentumStrategy {
       sequenceStartsAt: firstBar.timestamp,
     });
 
+    const tradePlan = {
+      entryPrice: entryPrice.toFixed(6),
+      stopPrice: stopPrice.toFixed(6),
+      targetPrice: targetPrice.toFixed(6),
+      barTimestamp: bar.timestamp,
+    };
+
     this.context.publishIntent({
       type: 'market',
       side: 'buy',
       quantity: quantity.toFixed(8),
       reason: 'three_line_momentum_entry',
+      metadata: {
+        tradePlan,
+      },
     });
 
     this.state.position = 'long';

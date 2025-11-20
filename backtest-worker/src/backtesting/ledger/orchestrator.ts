@@ -161,6 +161,7 @@ export class LedgerServiceOrchestratorImpl implements LedgerServiceOrchestrator 
 
       // 创建交易记录
       const trade: TradeRecord = {
+        taskId: (report as any)?.taskId ?? this.sessionId,
         tradeId: nanoid(),
         sessionId: this.sessionId,
         strategyId: report.strategyId,
@@ -259,4 +260,3 @@ export function createLedgerOrchestrator(
 ): LedgerServiceOrchestrator {
   return new LedgerServiceOrchestratorImpl(sessionId, pnlCalculator, logger);
 }
-

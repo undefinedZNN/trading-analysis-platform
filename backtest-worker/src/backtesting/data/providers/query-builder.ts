@@ -16,7 +16,7 @@ export class DefaultDuckDBQueryBuilder implements DuckDBQueryBuilder {
    */
   private readonly storageBasePath: string;
 
-  constructor(storageBasePath: string = 'storage/datasets') {
+  constructor(storageBasePath: string = '../backend/storage/datasets') {
     this.storageBasePath = storageBasePath;
   }
 
@@ -176,8 +176,10 @@ export class DefaultDuckDBQueryBuilder implements DuckDBQueryBuilder {
     timeframe: Timeframe
   ): string {
     if (market) {
+      console.log(`buildParquetPath market ==============================================: `, `${this.storageBasePath}/${symbol}/${market}/${timeframe}/**/*.parquet`);
       return `${this.storageBasePath}/${symbol}/${market}/${timeframe}/**/*.parquet`;
     }
+    console.log(`buildParquetPath no market ==============================================: `, `${this.storageBasePath}/${symbol}/${timeframe}/**/*.parquet`);
     return `${this.storageBasePath}/${symbol}/${timeframe}/**/*.parquet`;
   }
 
@@ -242,7 +244,7 @@ export class DefaultDuckDBQueryBuilder implements DuckDBQueryBuilder {
 
     while (offset < totalRecords) {
       const limit = Math.min(batchSize, totalRecords - offset);
-      
+
       batches.push({
         batchIndex,
         startTime: '', // 需要根据实际数据计算
@@ -277,6 +279,7 @@ export class DefaultDuckDBQueryBuilder implements DuckDBQueryBuilder {
   buildFeatureQuery(request: FetchRequest, featureIds: string[]): string {
     const { symbol, market, baseTimeframe } = request;
     const parquetPath = this.buildParquetPath(symbol, market, baseTimeframe);
+    console.log(`buildFeatureQuery parquetPath ==============================================: ${parquetPath}`);
 
     // 基础字段
     const baseFields = [

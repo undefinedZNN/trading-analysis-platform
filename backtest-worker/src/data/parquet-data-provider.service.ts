@@ -16,8 +16,10 @@ export class ParquetDataProviderService implements DataProvider {
   private readonly provider: ParquetDuckDBProvider;
 
   constructor(private readonly config: ConfigService) {
+    const storageBasePath = this.config.get<string>('worker.data.storagePath');
+    this.logger.log(`Parquet provider using storage path ==============================================: ${storageBasePath}`);
     const configOverrides: Partial<DataSourceConfig> = {
-      storageBasePath: this.config.get<string>('worker.data.storagePath'),
+      storageBasePath,
       defaultBatchSize: this.config.get<number>('worker.data.defaultBatchSize'),
       defaultGapPolicy: this.config.get('worker.data.gapPolicy'),
       defaultFillMethod: this.config.get('worker.data.fillMethod'),

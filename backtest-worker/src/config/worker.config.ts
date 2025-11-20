@@ -1,4 +1,5 @@
 import { registerAs } from '@nestjs/config';
+import { resolve } from 'path';
 
 export default registerAs('worker', () => {
   const port = parseInt(process.env.WORKER_PORT || process.env.PORT || '3001', 10);
@@ -6,6 +7,8 @@ export default registerAs('worker', () => {
   const mainServiceApiBase =
     process.env.MAIN_SERVICE_API_BASE || `${mainServiceBase.replace(/\/+$/, '')}/api/v1`;
 
+    console.log(`WORKER_DATA_STORAGE_PATH ==============================================:1 ${process.env.WORKER_DATA_STORAGE_PATH}`);
+    console.log(`WORKER_DATA_STORAGE_PATH ==============================================:2`, process.env.WORKER_DATA_STORAGE_PATH || '../backend/storage/datasets',);
   return {
     identity: process.env.WORKER_ID || `worker-${process.pid}`,
     server: {
@@ -47,7 +50,7 @@ export default registerAs('worker', () => {
     },
     data: {
       enableProvider: process.env.WORKER_DATA_ENABLE_PROVIDER !== 'false',
-      storagePath: process.env.WORKER_DATA_STORAGE_PATH || 'storage/datasets',
+      storagePath: process.env.WORKER_DATA_STORAGE_PATH || '../backend/storage/datasets',
       defaultBatchSize: parseInt(process.env.WORKER_DATA_BATCH_SIZE || '10000', 10),
       maxConcurrent: parseInt(process.env.WORKER_DATA_MAX_CONCURRENT || '3', 10),
       gapPolicy: process.env.WORKER_DATA_GAP_POLICY || 'skip',
@@ -55,6 +58,12 @@ export default registerAs('worker', () => {
     },
     logging: {
       metrics: process.env.WORKER_LOG_METRICS === 'true',
+    },
+    results: {
+      absoluteBasePath:
+        process.env.BACKTEST_RESULTS_PATH ||
+        resolve(process.cwd(), '../backend/storage/backtests'),
+      relativeBasePath: process.env.BACKTEST_RESULTS_RELATIVE || 'backtests',
     },
     reporting: {
       progressUrl: (process.env.MAIN_SERVICE_PROGRESS_URL || mainServiceApiBase).replace(/\/+$/, ''),

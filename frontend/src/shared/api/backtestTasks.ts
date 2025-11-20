@@ -8,41 +8,46 @@ const client = axios.create({
 /**
  * 回测任务状态
  */
-export enum BacktestTaskStatus {
-  PENDING = 'pending',
-  RUNNING = 'running',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-  CANCELLED = 'cancelled',
-}
+export const BacktestTaskStatus = {
+  PENDING: 'pending',
+  RUNNING: 'running',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+} as const;
+export type BacktestTaskStatus =
+  (typeof BacktestTaskStatus)[keyof typeof BacktestTaskStatus];
 
 /**
  * 日志级别
  */
-export enum LogLevel {
-  DEBUG = 'debug',
-  INFO = 'info',
-  WARN = 'warn',
-  ERROR = 'error',
-}
+export const LogLevel = {
+  DEBUG: 'debug',
+  INFO: 'info',
+  WARN: 'warn',
+  ERROR: 'error',
+} as const;
+export type LogLevel = (typeof LogLevel)[keyof typeof LogLevel];
 
 /**
  * 排序字段
  */
-export enum SortField {
-  CREATED_AT = 'createdAt',
-  STARTED_AT = 'startedAt',
-  COMPLETED_AT = 'completedAt',
-  TASK_NAME = 'taskName',
-}
+export const SortField = {
+  CREATED_AT: 'createdAt',
+  STARTED_AT: 'startedAt',
+  COMPLETED_AT: 'completedAt',
+  TASK_NAME: 'taskName',
+} as const;
+export type SortField = (typeof SortField)[keyof typeof SortField];
 
 /**
  * 排序方向
  */
-export enum SortOrder {
-  ASC = 'asc',
-  DESC = 'desc',
-}
+export const SortOrder = {
+  ASC: 'asc',
+  DESC: 'desc',
+} as const;
+export type SortOrder = (typeof SortOrder)[keyof typeof SortOrder];
 
 /**
  * 手续费配置
@@ -90,6 +95,12 @@ export interface DataConfig {
 /**
  * 结果摘要
  */
+export interface ResultArtifact {
+  type: string;
+  path: string;
+  [key: string]: unknown;
+}
+
 export interface ResultSummary {
   totalReturn: number;
   annualizedReturn: number;
@@ -101,6 +112,115 @@ export interface ResultSummary {
   finalCapital: number;
   processedBars: number;
   executionTime: number;
+  taskId?: string;
+  strategyId?: string;
+  scriptVersionId?: string | null;
+  initialCapital?: number;
+  endingEquity?: number;
+  returnPct?: number;
+  winningTrades?: number;
+  totalPnl?: number;
+  totalFees?: number;
+  profitFactor?: number;
+  artifacts?: ResultArtifact[];
+  datasetBaseGranularity?: string;
+}
+
+export interface TradeFactorSnapshot {
+  system?: Record<string, number | string>;
+  custom?: Record<string, number | string>;
+}
+
+export interface TradeExitSegment {
+  price: number;
+  quantity: number;
+  timestamp: string | null;
+  barTimestamp?: string | null;
+  reason?: string;
+}
+
+export interface TradeContext {
+  exitSegments?: TradeExitSegment[];
+  status?: string;
+  entryTimestamp?: string;
+  entryBarTimestamp?: string;
+  exitTimestamp?: string;
+  exitBarTimestamp?: string;
+}
+
+export interface TaskTradeRecord {
+  tradeId: string;
+  taskId: string;
+  sessionId: string;
+  strategyId: string;
+  scriptVersionId?: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  type: 'open' | 'close' | 'adjust';
+  quantity?: number | null;
+  price?: number | null;
+  realizedPnl?: number | null;
+  unrealizedPnl?: number | null;
+  fees?: number | null;
+  feeCurrency?: string;
+  liquidity?: string;
+  timestamp?: string | null;
+  sequenceId?: string;
+  position?: {
+    quantity?: number | null;
+    avgEntryPrice?: number | null;
+    side?: string | null;
+  };
+  reason?: string | null;
+  factorSnapshot?: TradeFactorSnapshot;
+  entryPrice?: number | null;
+  exitPrice?: number | null;
+  stopPrice?: number | null;
+  targetPrice?: number | null;
+  barTimestamp?: string | null;
+  entryTimestamp?: string | null;
+  exitTimestamp?: string | null;
+  exitSegments?: TradeExitSegment[];
+  status?: string | null;
+  context?: TradeContext;
+}
+
+export interface ListTaskTradesResponse {
+  trades: TaskTradeRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface ListTaskTradesQuery {
+  page?: number;
+  pageSize?: number;
+}
+
+export interface TaskBarsResponse {
+  taskId: string;
+  datasetId: number;
+  resolution: string;
+  from: number;
+  to: number;
+  limit: number;
+  hasMore: boolean;
+  candles: Array<{
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }>;
+}
+
+export interface TaskBarsQuery {
+  timestamp?: string;
+  timestampSec?: number;
+  resolution?: string;
+  beforeBars?: number;
+  afterBars?: number;
 }
 
 /**
@@ -130,6 +250,33 @@ export interface BacktestTask {
   errorStack?: string;
   createdBy?: string;
   updatedBy?: string;
+}
+
+export async function downloadBacktestTrades(taskId: string): Promise<Blob> {
+  const response = await client.get(`/${taskId}/trades`, {
+    responseType: 'blob',
+  });
+  return response.data;
+}
+
+export async function listTaskTrades(
+  taskId: string,
+  query: ListTaskTradesQuery,
+): Promise<ListTaskTradesResponse> {
+  const response = await client.get(`/${taskId}/trades/list`, {
+    params: query,
+  });
+  return response.data;
+}
+
+export async function fetchTaskBars(
+  taskId: string,
+  query: TaskBarsQuery,
+): Promise<TaskBarsResponse> {
+  const response = await client.get(`/${taskId}/bars`, {
+    params: query,
+  });
+  return response.data;
 }
 
 /**

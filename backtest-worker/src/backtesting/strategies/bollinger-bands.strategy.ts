@@ -142,7 +142,7 @@ export class BollingerBandsStrategy {
 
     // 检查止损
     if (this.state.position === 'long') {
-      this.checkStopLoss(close);
+      this.checkStopLoss(bar, close);
     }
 
     // 生成交易信号
@@ -196,7 +196,7 @@ export class BollingerBandsStrategy {
   /**
    * 检查止损
    */
-  private checkStopLoss(currentPrice: Big): void {
+  private checkStopLoss(bar: any, currentPrice: Big): void {
     if (!this.state.stopLossPrice) {
       return;
     }
@@ -210,11 +210,21 @@ export class BollingerBandsStrategy {
         entryPrice: this.state.entryPrice,
       });
 
+      const tradePlan = {
+        entryPrice: this.state.entryPrice ?? undefined,
+        exitPrice: currentPrice.toFixed(6),
+        stopPrice: this.state.stopLossPrice ?? undefined,
+        barTimestamp: bar.timestamp,
+      };
+
       this.context.publishIntent({
         type: 'market',
         side: 'sell',
         quantity: 'all',
         reason: 'stop_loss',
+        metadata: {
+          tradePlan,
+        },
       });
 
       this.resetPosition();
@@ -229,6 +239,11 @@ export class BollingerBandsStrategy {
     const positionValue = new Big(equity).times(this.params.positionSize);
     const quantity = positionValue.div(price);
     const stopLoss = price.times(1 - this.params.stopLossPercent);
+    const tradePlan = {
+      entryPrice: price.toFixed(6),
+      stopPrice: stopLoss.toFixed(6),
+      barTimestamp: bar.timestamp,
+    };
 
     this.context.log('info', 'Bollinger Buy Signal', {
       reason,
@@ -243,6 +258,9 @@ export class BollingerBandsStrategy {
       side: 'buy',
       quantity: quantity.toFixed(8),
       reason,
+      metadata: {
+        tradePlan,
+      },
     });
 
     this.state.position = 'long';
@@ -261,6 +279,12 @@ export class BollingerBandsStrategy {
 
     const entryPrice = new Big(this.state.entryPrice);
     const pnl = price.minus(entryPrice).div(entryPrice).times(100);
+    const tradePlan = {
+      entryPrice: this.state.entryPrice ?? undefined,
+      exitPrice: price.toFixed(6),
+      stopPrice: this.state.stopLossPrice ?? undefined,
+      barTimestamp: bar.timestamp,
+    };
 
     this.context.log('info', 'Bollinger Sell Signal', {
       reason,
@@ -276,6 +300,9 @@ export class BollingerBandsStrategy {
       side: 'sell',
       quantity: 'all',
       reason,
+      metadata: {
+        tradePlan,
+      },
     });
 
     this.resetPosition();
@@ -318,4 +345,3 @@ export default {
   features,
   Strategy: BollingerBandsStrategy,
 };
-

@@ -991,7 +991,7 @@ export class TradingDataService {
           close,
           volume
         FROM ${parquetScan}
-        WHERE timestamp BETWEEN TIMESTAMP '${fromIso}' AND TIMESTAMP '${toIso}'
+        WHERE timestamp BETWEEN TIMESTAMPTZ '${fromIso}' AND TIMESTAMPTZ '${toIso}'
         ORDER BY timestamp
         ${limitClause};
       `;
@@ -1001,7 +1001,7 @@ export class TradingDataService {
           SELECT *,
             CAST(FLOOR(epoch(timestamp) / ${intervalSeconds}) * ${intervalSeconds} AS BIGINT) AS bucket
           FROM ${parquetScan}
-          WHERE timestamp BETWEEN TIMESTAMP '${fromIso}' AND TIMESTAMP '${toIso}'
+          WHERE timestamp BETWEEN TIMESTAMPTZ '${fromIso}' AND TIMESTAMPTZ '${toIso}'
         )
         SELECT
           bucket AS time,

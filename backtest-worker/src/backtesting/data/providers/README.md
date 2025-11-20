@@ -20,7 +20,7 @@ import { createParquetDuckDBProvider } from '@/backtesting/data/providers';
 
 // 创建数据提供者
 const provider = createParquetDuckDBProvider({
-  storageBasePath: 'storage/datasets',
+  storageBasePath: '../backend/storage/datasets',
   defaultBatchSize: 10000,
   defaultGapPolicy: 'skip',
 });
@@ -211,7 +211,7 @@ if (filler.isSynthetic(bar)) {
 ```typescript
 import { createQueryBuilder } from '@/backtesting/data/providers';
 
-const builder = createQueryBuilder('storage/datasets');
+const builder = createQueryBuilder('../backend/storage/datasets');
 
 // 构建范围查询
 const sql = builder.buildRangeQuery(request, batch);
@@ -245,7 +245,7 @@ interface DataSourceConfig {
 
 ```typescript
 const provider = createParquetDuckDBProvider({
-  storageBasePath: 'storage/datasets',
+  storageBasePath: '../backend/storage/datasets',
   defaultBatchSize: 10000,
   defaultOverlapSize: 0,
   defaultMaxConcurrent: 3,

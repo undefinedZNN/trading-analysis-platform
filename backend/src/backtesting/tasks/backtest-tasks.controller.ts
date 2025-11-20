@@ -7,11 +7,13 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
+  NotFoundException,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
   Query,
+  Res,
   UnauthorizedException,
   ValidationPipe,
 } from '@nestjs/common';
@@ -28,6 +30,9 @@ import {
   ApiOkResponse,
   ApiNoContentResponse,
 } from '@nestjs/swagger';
+import { Response } from 'express';
+import { createReadStream } from 'fs';
+import { access } from 'fs/promises';
 import { BacktestTasksService } from './backtest-tasks.service';
 import { TaskLogsService } from './task-logs.service';
 import { TaskExecutorService } from './task-executor.service';
@@ -36,6 +41,8 @@ import {
   UpdateBacktestTaskDto,
   ListBacktestTasksDto,
   ListTaskLogsDto,
+  ListTaskTradesDto,
+  TaskBarsQueryDto,
   WorkerProgressDto,
   WorkerResultDto,
 } from './dto';
@@ -213,6 +220,121 @@ export class BacktestTasksController {
     @Param('taskId', ParseUUIDPipe) taskId: string,
   ): Promise<BacktestTaskEntity> {
     return await this.backtestTasksService.findOne(taskId);
+  }
+
+  /**
+   * 分页查询交易明细
+   */
+  @Get(':taskId/trades/list')
+  @ApiOperation({
+    summary: '查询交易明细（分页）',
+    description: '基于 Parquet 结果文件读取指定任务的交易明细，支持分页返回。',
+  })
+  @ApiParam({
+    name: 'taskId',
+    description: '任务ID（UUID）',
+  })
+  @ApiQuery({ name: 'page', required: false, description: '页码（从1开始）', example: 1 })
+  @ApiQuery({ name: 'pageSize', required: false, description: '每页数量，最大500', example: 50 })
+  @ApiOkResponse({
+    description: '交易明细列表',
+    schema: {
+      example: {
+        trades: [
+          {
+            taskId: '770e8400-e29b-41d4-a716-446655440002',
+            symbol: 'ES-23/ES',
+            side: 'buy',
+            type: 'open',
+            quantity: 1.25,
+            price: 1543.37,
+            realizedPnl: 12.5,
+            fees: 0.5,
+            timestamp: '2025-11-18T02:33:43.000Z',
+            factorSnapshot: {
+              system: { fast_ma: 1500.23 },
+              custom: { riskScore: 'medium' },
+            },
+            entryPrice: 1543.37,
+            stopPrice: 1542.38,
+            targetPrice: 1544.35,
+            barTimestamp: '2025-11-18T02:33:40.000Z',
+          },
+        ],
+        total: 128,
+        page: 1,
+        pageSize: 50,
+      },
+    },
+  })
+  async listTrades(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Query(ValidationPipe) query: ListTaskTradesDto,
+  ) {
+    return await this.backtestTasksService.listTrades(taskId, query);
+  }
+
+  /**
+   * 查询任务K线片段
+   */
+  @Get(':taskId/bars')
+  @ApiOperation({
+    summary: '查询任务数据集的K线片段',
+    description: '基于任务绑定的数据集返回以指定时间为中心的K线窗口，供交易回放使用。',
+  })
+  @ApiParam({
+    name: 'taskId',
+    description: '任务ID（UUID）',
+  })
+  @ApiQuery({ name: 'timestamp', required: false, description: '中心时间（ISO格式）' })
+  @ApiQuery({ name: 'timestampSec', required: false, description: '中心时间（Unix秒）' })
+  @ApiQuery({ name: 'resolution', required: false, description: 'K线粒度，例如 1m/5m/1h' })
+  @ApiQuery({ name: 'beforeBars', required: false, description: '向前K线数量' })
+  @ApiQuery({ name: 'afterBars', required: false, description: '向后K线数量' })
+  @ApiOkResponse({
+    description: '返回指定窗口内的K线数据',
+  })
+  async getTaskBars(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Query(ValidationPipe) query: TaskBarsQueryDto,
+  ) {
+    return await this.backtestTasksService.getTaskBars(taskId, query);
+  }
+
+  /**
+   * 下载交易明细（Parquet）
+   */
+  @Get(':taskId/trades')
+  @ApiOperation({
+    summary: '下载交易明细（Parquet）',
+    description: '下载指定任务生成的交易明细 Parquet 文件。',
+  })
+  @ApiParam({
+    name: 'taskId',
+    description: '任务ID（UUID）',
+  })
+  @ApiOkResponse({
+    description: '返回 Parquet 文件流',
+  })
+  async downloadTrades(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { absolutePath } = await this.backtestTasksService.getTradeResultPath(taskId);
+
+    try {
+      await access(absolutePath);
+    } catch {
+      throw new NotFoundException('交易明细文件不存在或已清理');
+    }
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${taskId}-trades.parquet"`,
+    );
+
+    createReadStream(absolutePath).pipe(res);
   }
 
   /**

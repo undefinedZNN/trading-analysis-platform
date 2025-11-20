@@ -11,7 +11,7 @@ async function example1_BasicFetch() {
   console.log('\n=== 示例 1: 基础数据提取 ===\n');
 
   const provider = createParquetDuckDBProvider({
-    storageBasePath: 'storage/datasets',
+    storageBasePath: '../backend/storage/datasets',
     defaultBatchSize: 1000,
   });
 
@@ -258,7 +258,7 @@ async function example7_Metadata() {
   console.log('\n=== 示例 7: 获取数据集元数据 ===\n');
 
   const provider = createParquetDuckDBProvider({
-    storageBasePath: 'storage/datasets',
+    storageBasePath: '../backend/storage/datasets',
   });
 
   try {

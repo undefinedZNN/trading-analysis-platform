@@ -422,7 +422,6 @@ function StrategyManagementLandingPage() {
   const [createTaskModalOpen, setCreateTaskModalOpen] = useState(false);
   const [selectedStrategyForTask, setSelectedStrategyForTask] = useState<string | undefined>();
   const [datasets, setDatasets] = useState<DatasetDto[]>([]);
-  const [loadingDatasets, setLoadingDatasets] = useState(false);
 
   const [form] = Form.useForm<{ keyword?: string; tags?: string[] }>();
   const [createForm] = Form.useForm<{
@@ -432,6 +431,7 @@ function StrategyManagementLandingPage() {
     versionName?: string;
     remark?: string;
     code: string;
+    isMaster?: boolean;
   }>();
   const [versionForm] = Form.useForm<{
     versionName?: string;
@@ -490,14 +490,11 @@ function StrategyManagementLandingPage() {
   // 加载数据集列表
   const loadDatasets = useCallback(async () => {
     try {
-      setLoadingDatasets(true);
       const response = await listDatasets({ pageSize: 100 });  // 使用合理的限制
       setDatasets(response.items);
     } catch (err) {
       const msg = err instanceof Error ? err.message : '加载数据集失败';
       message.warning(msg);
-    } finally {
-      setLoadingDatasets(false);
     }
   }, [message]);
 
@@ -769,9 +766,9 @@ function StrategyManagementLandingPage() {
       versionForm.setFieldsValue({
         versionName:
           mode === 'edit'
-            ? baseVersion?.versionName
+            ? baseVersion?.versionName ?? undefined
             : undefined,
-        remark: baseVersion?.remark,
+        remark: baseVersion?.remark ?? undefined,
         isMaster:
           mode === 'edit'
             ? baseVersion?.isMaster ?? false

@@ -443,12 +443,19 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
             { type: 'number', min: 1, max: 10000000, message: '初始资金范围: 1 - 10,000,000' },
           ]}
         >
-          <InputNumber
+          <InputNumber<number>
             style={{ width: '100%' }}
             min={1}
             max={10000000}
-            formatter={(value) => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-            parser={(value) => value!.replace(/\$\s?|(,*)/g, '')}
+            formatter={(value) =>
+              `$ ${value !== undefined ? value.toString() : ''}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+            }
+            parser={(value) => {
+              if (!value) return 0 as number;
+              const numeric = value.replace(/\$\s?|(,*)/g, '');
+              const parsed = Number(numeric);
+              return Number.isFinite(parsed) ? parsed : 0;
+            }}
           />
         </Form.Item>
 
@@ -460,7 +467,7 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
             rules={[{ required: true }, { type: 'number', min: 0, max: 0.01 }]}
             style={{ marginBottom: 0 }}
           >
-            <InputNumber
+            <InputNumber<number>
               min={0}
               max={0.01}
               step={0.0001}
@@ -475,7 +482,7 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
             rules={[{ required: true }, { type: 'number', min: 0, max: 0.01 }]}
             style={{ marginBottom: 0 }}
           >
-            <InputNumber
+            <InputNumber<number>
               min={0}
               max={0.01}
               step={0.0001}
@@ -536,4 +543,3 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
 };
 
 export default CreateBacktestTaskModal;
-

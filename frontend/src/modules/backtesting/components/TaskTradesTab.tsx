@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Card,
   Table,
@@ -14,6 +14,9 @@ import {
   Alert,
   Typography,
   Tooltip,
+  message,
+  Popover,
+  List,
 } from 'antd';
 import {
   DownloadOutlined,
@@ -25,149 +28,167 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import dayjs from 'dayjs';
-import type { BacktestTask } from '../../../shared/api/backtestTasks';
+import type { BacktestTask, TaskTradeRecord, TradeExitSegment } from '../../../shared/api/backtestTasks';
+import { downloadBacktestTrades, listTaskTrades } from '../../../shared/api/backtestTasks';
+import { TradeKLineDrawer } from './TradeKLineDrawer';
 
 const { Text } = Typography;
 const { RangePicker } = DatePicker;
-
-/**
- * 交易记录接口
- * TODO: 后续从后端API获取实际数据
- */
-interface TradeRecord {
-  tradeId: string;
-  timestamp: string;
-  symbol: string;
-  side: 'long' | 'short';
-  action: 'open' | 'close';
-  quantity: number;
-  price: number;
-  pnl?: number;
-  pnlPercent?: number;
-  commission: number;
-  factors?: Record<string, any>;
-}
 
 interface TaskTradesTabProps {
   task: BacktestTask;
 }
 
-/**
- * 交易明细Tab组件
- * 展示回测任务的所有交易记录
- */
 export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
   const [loading, setLoading] = useState(false);
-  const [trades, setTrades] = useState<TradeRecord[]>([]);
+  const [trades, setTrades] = useState<TaskTradeRecord[]>([]);
   const [pagination, setPagination] = useState<TablePaginationConfig>({
     current: 1,
     pageSize: 20,
     total: 0,
-    showSizeChanger: true,
     showQuickJumper: true,
+    showSizeChanger: true,
     showTotal: (total) => `共 ${total} 条记录`,
   });
+  const [selectedTrade, setSelectedTrade] = useState<TaskTradeRecord | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // 筛选条件
   const [filters, setFilters] = useState({
     keyword: '',
-    side: undefined as 'long' | 'short' | undefined,
-    action: undefined as 'open' | 'close' | undefined,
+    side: undefined as 'buy' | 'sell' | undefined,
+    action: undefined as 'open' | 'close' | 'adjust' | undefined,
     dateRange: undefined as [dayjs.Dayjs, dayjs.Dayjs] | undefined,
   });
 
-  /**
-   * 生成模拟交易数据
-   * TODO: 后续从后端API获取实际数据
-   */
-  const generateMockTrades = (): TradeRecord[] => {
-    if (!task.resultSummary) return [];
-
-    const { totalTrades, initialCapital } = task.resultSummary
-      ? { totalTrades: task.resultSummary.totalTrades, initialCapital: task.executionConfig.initialCapital }
-      : { totalTrades: 0, initialCapital: 0 };
-
-    const mockTrades: TradeRecord[] = [];
-    const symbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT'];
-
-    for (let i = 0; i < Math.min(totalTrades, 100); i++) {
-      const side = Math.random() > 0.5 ? 'long' : 'short';
-      const action = i % 2 === 0 ? 'open' : 'close';
-      const symbol = symbols[Math.floor(Math.random() * symbols.length)];
-      const price = 30000 + Math.random() * 10000;
-      const quantity = Math.random() * 0.1;
-      const commission = price * quantity * 0.001;
-
-      // 计算盈亏（仅平仓时）
-      let pnl: number | undefined;
-      let pnlPercent: number | undefined;
-      if (action === 'close') {
-        const entryPrice = price * (0.95 + Math.random() * 0.1);
-        pnl = side === 'long' 
-          ? (price - entryPrice) * quantity - commission
-          : (entryPrice - price) * quantity - commission;
-        pnlPercent = (pnl / (entryPrice * quantity)) * 100;
+  const loadTrades = useCallback(
+    async (page = pagination.current || 1, pageSize = pagination.pageSize || 20) => {
+      setLoading(true);
+      try {
+        const response = await listTaskTrades(task.taskId, {
+          page,
+          pageSize,
+        });
+        setTrades(response.trades);
+        setPagination((prev) => ({
+          ...prev,
+          current: response.page,
+          pageSize: response.pageSize,
+          total: response.total,
+        }));
+      } catch (error: any) {
+        console.error('[TaskTradesTab] 加载交易失败', error);
+        message.error(error?.message || '加载交易失败');
+      } finally {
+        setLoading(false);
       }
+    },
+    [task.taskId, pagination.current, pagination.pageSize],
+  );
 
-      mockTrades.push({
-        tradeId: `trade-${i + 1}`,
-        timestamp: dayjs(task.dataConfig.timeRange.start)
-          .add(i * 10, 'minute')
-          .toISOString(),
-        symbol,
-        side,
-        action,
-        quantity,
-        price,
-        pnl,
-        pnlPercent,
-        commission,
-        factors: {
-          rsi: (Math.random() * 100).toFixed(2),
-          macd: (Math.random() * 10 - 5).toFixed(2),
-          volume: (Math.random() * 1000000).toFixed(0),
-        },
-      });
-    }
-
-    return mockTrades;
-  };
-
-  /**
-   * 加载交易数据
-   */
-  const loadTrades = () => {
-    setLoading(true);
-
-    // 模拟API调用延迟
-    setTimeout(() => {
-      const mockData = generateMockTrades();
-      setTrades(mockData);
-      setPagination({
-        ...pagination,
-        total: mockData.length,
-      });
-      setLoading(false);
-    }, 500);
-  };
-
-  /**
-   * 初始加载
-   */
-  React.useEffect(() => {
-    loadTrades();
+  useEffect(() => {
+    loadTrades(1, pagination.pageSize || 20);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.taskId]);
 
-  /**
-   * 表格列定义
-   */
-  const columns: ColumnsType<TradeRecord> = [
+  const stats = useMemo(() => {
+    const total = trades.length;
+    const wins = trades.filter((trade) => (trade.realizedPnl ?? 0) > 0).length;
+    const losses = trades.filter((trade) => (trade.realizedPnl ?? 0) < 0).length;
+    const totalPnl = trades.reduce((acc, trade) => acc + (trade.realizedPnl ?? 0), 0);
+    const winRate = total > 0 ? (wins / total) * 100 : 0;
+    const avgWin = wins > 0 ? trades.filter((t) => (t.realizedPnl ?? 0) > 0).reduce((acc, t) => acc + (t.realizedPnl ?? 0), 0) / wins : 0;
+    const avgLoss = losses > 0 ? trades.filter((t) => (t.realizedPnl ?? 0) < 0).reduce((acc, t) => acc + Math.abs(t.realizedPnl ?? 0), 0) / losses : 0;
+    const profitFactor = avgLoss > 0 ? avgWin / avgLoss : 0;
+    const totalFees = trades.reduce((acc, trade) => acc + (trade.fees ?? 0), 0);
+    return { total, wins, losses, totalPnl, winRate, profitFactor, totalFees };
+  }, [trades]);
+
+  const handleRefresh = () => {
+    loadTrades(pagination.current || 1, pagination.pageSize || 20);
+  };
+
+  const handleExport = async () => {
+    try {
+      const blob = await downloadBacktestTrades(task.taskId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${task.taskName || task.taskId}-trades.parquet`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error: any) {
+      console.error('[TaskTradesTab] 下载失败', error);
+      message.error(error?.message || '下载交易明细失败');
+    }
+  };
+
+  const handleViewKline = (tradeRecord: TaskTradeRecord) => {
+    setSelectedTrade(tradeRecord);
+    setDrawerOpen(true);
+  };
+
+  const handleTableChange = (pager: TablePaginationConfig) => {
+    const nextPage = pager.current || 1;
+    const nextSize = pager.pageSize || 20;
+    loadTrades(nextPage, nextSize);
+  };
+
+  const handleApplyFilters = () => {
+    message.info('筛选功能将在后续版本提供');
+  };
+
+  const handleClearFilters = () => {
+    setFilters({ keyword: '', side: undefined, action: undefined, dateRange: undefined });
+  };
+
+  const statusLabels: Record<string, { label: string; color: string }> = {
+    take_profit: { label: '止盈', color: 'green' },
+    stop_loss: { label: '止损', color: 'red' },
+    break_even: { label: '打平', color: 'default' },
+    profit: { label: '盈利', color: 'green' },
+    loss: { label: '亏损', color: 'red' },
+  };
+
+  const renderSegments = (segments?: TradeExitSegment[]) => {
+    if (!segments || segments.length === 0) {
+      return '-';
+    }
+    return (
+      <Popover
+        title="减仓明细"
+        content={
+          <List
+            size="small"
+            dataSource={segments}
+            renderItem={(item, index) => (
+              <List.Item>
+                <Space direction="vertical" size={2}>
+                  <Text>序号: {index + 1}</Text>
+                  <Text>价格: {item.price?.toFixed(4)}</Text>
+                  <Text>数量: {item.quantity?.toFixed(4)}</Text>
+                  <Text>
+                    时间:{' '}
+                    {item.timestamp ? dayjs(item.timestamp).format('YYYY-MM-DD HH:mm:ss') : '-'}
+                  </Text>
+                </Space>
+              </List.Item>
+            )}
+          />
+        }
+      >
+        <Button size="small" type="link">
+          {segments.length} 次
+        </Button>
+      </Popover>
+    );
+  };
+
+  const columns: ColumnsType<TaskTradeRecord> = [
     {
       title: '交易ID',
       dataIndex: 'tradeId',
       key: 'tradeId',
-      width: 120,
+      width: 140,
       fixed: 'left',
       render: (text) => (
         <Text code style={{ fontSize: 12 }}>
@@ -176,24 +197,28 @@ export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
       ),
     },
     {
-      title: '时间',
-      dataIndex: 'timestamp',
-      key: 'timestamp',
+      title: '开仓时间',
+      dataIndex: 'entryTimestamp',
+      key: 'entryTimestamp',
       width: 180,
-      sorter: (a, b) => dayjs(a.timestamp).unix() - dayjs(b.timestamp).unix(),
-      render: (text) => dayjs(text).format('YYYY-MM-DD HH:mm:ss'),
+      sorter: (a, b) =>
+        dayjs(a.entryTimestamp ?? '').unix() - dayjs(b.entryTimestamp ?? '').unix(),
+      render: (text) => (text ? dayjs(text).format('YYYY-MM-DD HH:mm:ss') : '-'),
+    },
+    {
+      title: '平仓时间',
+      dataIndex: 'exitTimestamp',
+      key: 'exitTimestamp',
+      width: 180,
+      sorter: (a, b) =>
+        dayjs(a.exitTimestamp ?? '').unix() - dayjs(b.exitTimestamp ?? '').unix(),
+      render: (text) => (text ? dayjs(text).format('YYYY-MM-DD HH:mm:ss') : '-'),
     },
     {
       title: '交易对',
       dataIndex: 'symbol',
       key: 'symbol',
       width: 120,
-      filters: [
-        { text: 'BTC/USDT', value: 'BTC/USDT' },
-        { text: 'ETH/USDT', value: 'ETH/USDT' },
-        { text: 'BNB/USDT', value: 'BNB/USDT' },
-      ],
-      onFilter: (value, record) => record.symbol === value,
       render: (text) => <Tag color="blue">{text}</Tag>,
     },
     {
@@ -201,31 +226,8 @@ export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
       dataIndex: 'side',
       key: 'side',
       width: 80,
-      filters: [
-        { text: '做多', value: 'long' },
-        { text: '做空', value: 'short' },
-      ],
-      onFilter: (value, record) => record.side === value,
-      render: (side: 'long' | 'short') => (
-        <Tag color={side === 'long' ? 'green' : 'red'}>
-          {side === 'long' ? '做多' : '做空'}
-        </Tag>
-      ),
-    },
-    {
-      title: '操作',
-      dataIndex: 'action',
-      key: 'action',
-      width: 80,
-      filters: [
-        { text: '开仓', value: 'open' },
-        { text: '平仓', value: 'close' },
-      ],
-      onFilter: (value, record) => record.action === value,
-      render: (action: 'open' | 'close') => (
-        <Tag color={action === 'open' ? 'cyan' : 'orange'}>
-          {action === 'open' ? '开仓' : '平仓'}
-        </Tag>
+      render: (side: TaskTradeRecord['side']) => (
+        <Tag color={side === 'buy' ? 'green' : 'red'}>{side === 'buy' ? '做多' : '做空'}</Tag>
       ),
     },
     {
@@ -234,64 +236,61 @@ export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
       key: 'quantity',
       width: 100,
       align: 'right',
-      sorter: (a, b) => a.quantity - b.quantity,
-      render: (value) => value.toFixed(4),
+      render: (value) => (value ? value.toFixed(4) : '-'),
     },
     {
-      title: '价格',
-      dataIndex: 'price',
-      key: 'price',
+      title: '入场价',
+      dataIndex: 'entryPrice',
+      key: 'entryPrice',
       width: 120,
       align: 'right',
-      sorter: (a, b) => a.price - b.price,
-      render: (value) => `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      render: (value) =>
+        value !== undefined && value !== null
+          ? value.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })
+          : '-',
     },
     {
-      title: '盈亏',
-      dataIndex: 'pnl',
-      key: 'pnl',
+      title: '出场价',
+      dataIndex: 'exitPrice',
+      key: 'exitPrice',
       width: 120,
       align: 'right',
-      sorter: (a, b) => (a.pnl || 0) - (b.pnl || 0),
-      render: (value) => {
-        if (value === undefined) return '-';
-        return (
-          <Space>
-            <Text
-              style={{
-                color: value >= 0 ? '#3f8600' : '#cf1322',
-                fontWeight: 'bold',
-              }}
-            >
-              {value >= 0 ? '+' : ''}${value.toFixed(2)}
-            </Text>
-          </Space>
-        );
+      render: (value) =>
+        value !== undefined && value !== null
+          ? value.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })
+          : '-',
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: (_, record) => {
+        const status = record.status || record.context?.status;
+        if (!status) return '-';
+        const info = statusLabels[status] || { label: status, color: 'default' };
+        return <Tag color={info.color}>{info.label}</Tag>;
       },
     },
     {
-      title: '收益率',
-      dataIndex: 'pnlPercent',
-      key: 'pnlPercent',
-      width: 100,
+      title: '盈亏',
+      dataIndex: 'realizedPnl',
+      key: 'realizedPnl',
+      width: 120,
       align: 'right',
-      sorter: (a, b) => (a.pnlPercent || 0) - (b.pnlPercent || 0),
+      sorter: (a, b) => (a.realizedPnl || 0) - (b.realizedPnl || 0),
       render: (value) => {
-        if (value === undefined) return '-';
+        if (value === undefined || value === null) return '-';
         return (
           <Space>
-            {value >= 0 ? (
-              <RiseOutlined style={{ color: '#3f8600' }} />
-            ) : (
-              <FallOutlined style={{ color: '#cf1322' }} />
-            )}
-            <Text
-              style={{
-                color: value >= 0 ? '#3f8600' : '#cf1322',
-                fontWeight: 'bold',
-              }}
-            >
-              {value >= 0 ? '+' : ''}{value.toFixed(2)}%
+            <Text style={{ color: value > 0 ? '#389e0d' : value < 0 ? '#cf1322' : undefined }}>
+              {value.toFixed(2)}
             </Text>
           </Space>
         );
@@ -299,161 +298,128 @@ export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
     },
     {
       title: '手续费',
-      dataIndex: 'commission',
-      key: 'commission',
-      width: 100,
+      dataIndex: 'fees',
+      key: 'fees',
+      width: 120,
       align: 'right',
-      sorter: (a, b) => a.commission - b.commission,
-      render: (value) => `$${value.toFixed(4)}`,
+      render: (value) => (value ? value.toFixed(4) : '-'),
     },
     {
-      title: '因子',
-      key: 'factors',
-      width: 100,
-      align: 'center',
-      render: (_, record) => (
-        <Tooltip
-          title={
-            <div>
-              {record.factors &&
-                Object.entries(record.factors).map(([key, value]) => (
-                  <div key={key}>
-                    {key}: {value}
+      title: '因子快照',
+      dataIndex: 'factorSnapshot',
+      key: 'factorSnapshot',
+      width: 160,
+      render: (value) => {
+        if (!value || (!value.system && !value.custom)) return '-';
+        return (
+          <Tooltip
+            title={
+              <div>
+                {value.system && (
+                  <div style={{ marginBottom: 8 }}>
+                    <Text strong>系统因子</Text>
+                    <pre style={{ margin: 0 }}>{JSON.stringify(value.system, null, 2)}</pre>
                   </div>
-                ))}
-            </div>
-          }
-        >
-          <Button type="link" size="small">
-            查看 ({Object.keys(record.factors || {}).length})
-          </Button>
-        </Tooltip>
+                )}
+                {value.custom && (
+                  <div>
+                    <Text strong>自定义因子</Text>
+                    <pre style={{ margin: 0 }}>{JSON.stringify(value.custom, null, 2)}</pre>
+                  </div>
+                )}
+              </div>
+            }
+          >
+            <Text type="secondary">查看因子</Text>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: '减仓分段',
+      key: 'segments',
+      width: 120,
+      render: (_, record) => renderSegments(record.exitSegments),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 140,
+      fixed: 'right',
+      render: (_, record) => (
+        <Button size="small" onClick={() => handleViewKline(record)}>
+          查看K线
+        </Button>
       ),
     },
   ];
 
-  /**
-   * 计算交易统计
-   */
-  const calculateStats = () => {
-    const totalPnL = trades
-      .filter((t) => t.pnl !== undefined)
-      .reduce((sum, t) => sum + (t.pnl || 0), 0);
-
-    const profitTrades = trades.filter((t) => t.pnl && t.pnl > 0).length;
-    const lossTrades = trades.filter((t) => t.pnl && t.pnl < 0).length;
-    const totalCommission = trades.reduce((sum, t) => sum + t.commission, 0);
-
-    return { totalPnL, profitTrades, lossTrades, totalCommission };
-  };
-
-  const stats = calculateStats();
-
-  /**
-   * 导出CSV
-   * TODO: 实现CSV导出功能（P3-14）
-   */
-  const handleExport = () => {
-    console.log('导出CSV功能开发中...');
-  };
-
-  /**
-   * 刷新数据
-   */
-  const handleRefresh = () => {
-    loadTrades();
-  };
-
-  /**
-   * 清空筛选
-   */
-  const handleClearFilters = () => {
-    setFilters({
-      keyword: '',
-      side: undefined,
-      action: undefined,
-      dateRange: undefined,
-    });
-  };
-
-  // 如果没有结果数据，显示提示
-  if (!task.resultSummary) {
-    return (
-      <div style={{ padding: '24px' }}>
-        <Alert
-          message="交易数据不可用"
-          description="回测任务尚未完成或交易数据生成失败"
-          type="warning"
-          showIcon
-        />
-      </div>
-    );
-  }
-
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="large">
-      {/* 数据说明提示 */}
-      <Alert
-        message="交易数据说明"
-        description="当前显示的是基于回测结果生成的模拟交易数据。完整的交易明细数据将在后续版本中从后端API和DuckDB/Parquet文件获取。"
-        type="info"
-        showIcon
-        closable
-      />
+      {task.status !== 'completed' && (
+        <Card>
+          <Alert
+            message="提示"
+            description="任务尚未完成，当前展示为最新的交易快照。"
+            type="info"
+            showIcon
+          />
+        </Card>
+      )}
 
-      {/* 统计卡片 */}
       <Card>
         <Row gutter={16}>
-          <Col span={6}>
+          <Col xs={24} sm={12} md={6}>
+            <Statistic title="总交易数" value={stats.total} prefix={<SwapOutlined />} />
+          </Col>
+          <Col xs={24} sm={12} md={6}>
             <Statistic
-              title="总盈亏"
-              value={stats.totalPnL}
+              title="胜率"
+              value={stats.winRate}
               precision={2}
-              prefix="$"
-              valueStyle={{
-                color: stats.totalPnL >= 0 ? '#3f8600' : '#cf1322',
-              }}
+              suffix="%"
+              prefix={<RiseOutlined />}
             />
           </Col>
-          <Col span={6}>
+          <Col xs={24} sm={12} md={6}>
             <Statistic
-              title="盈利交易"
-              value={stats.profitTrades}
-              suffix="笔"
-              valueStyle={{ color: '#3f8600' }}
-            />
-          </Col>
-          <Col span={6}>
-            <Statistic
-              title="亏损交易"
-              value={stats.lossTrades}
-              suffix="笔"
-              valueStyle={{ color: '#cf1322' }}
-            />
-          </Col>
-          <Col span={6}>
-            <Statistic
-              title="总手续费"
-              value={stats.totalCommission}
+              title="累计盈亏"
+              value={stats.totalPnl}
               precision={2}
-              prefix="$"
+              prefix={<FallOutlined />}
             />
+          </Col>
+          <Col xs={24} sm={12} md={6}>
+            <Statistic
+              title="Profit Factor"
+              value={stats.profitFactor}
+              precision={2}
+              prefix="PF"
+            />
+          </Col>
+        </Row>
+        <Row gutter={16} style={{ marginTop: 16 }}>
+          <Col xs={24} sm={12} md={6}>
+            <Statistic title="胜场" value={stats.wins} />
+          </Col>
+          <Col xs={24} sm={12} md={6}>
+            <Statistic title="败场" value={stats.losses} />
+          </Col>
+          <Col xs={24} sm={12} md={6}>
+            <Statistic title="总手续费" value={stats.totalFees} precision={4} />
           </Col>
         </Row>
       </Card>
 
-      {/* 筛选工具栏 */}
       <Card size="small">
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Row gutter={16}>
             <Col span={6}>
               <Input
-                placeholder="搜索交易对或交易ID"
+                placeholder="搜索交易对或ID"
                 prefix={<FilterOutlined />}
                 value={filters.keyword}
-                onChange={(e) =>
-                  setFilters({ ...filters, keyword: e.target.value })
-                }
+                onChange={(e) => setFilters({ ...filters, keyword: e.target.value })}
                 allowClear
               />
             </Col>
@@ -465,21 +431,22 @@ export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
                 onChange={(value) => setFilters({ ...filters, side: value })}
                 allowClear
                 options={[
-                  { label: '做多', value: 'long' },
-                  { label: '做空', value: 'short' },
+                  { label: '做多', value: 'buy' },
+                  { label: '做空', value: 'sell' },
                 ]}
               />
             </Col>
             <Col span={4}>
               <Select
                 style={{ width: '100%' }}
-                placeholder="操作类型"
+                placeholder="交易状态"
                 value={filters.action}
                 onChange={(value) => setFilters({ ...filters, action: value })}
                 allowClear
                 options={[
-                  { label: '开仓', value: 'open' },
-                  { label: '平仓', value: 'close' },
+                  { label: '止盈', value: 'take_profit' },
+                  { label: '止损', value: 'stop_loss' },
+                  { label: '打平', value: 'break_even' },
                 ]}
               />
             </Col>
@@ -499,11 +466,7 @@ export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
             <Col span={4}>
               <Space>
                 <Button onClick={handleClearFilters}>清空</Button>
-                <Button
-                  icon={<SwapOutlined />}
-                  type="primary"
-                  onClick={loadTrades}
-                >
+                <Button icon={<SwapOutlined />} type="primary" onClick={handleApplyFilters}>
                   应用筛选
                 </Button>
               </Space>
@@ -512,25 +475,15 @@ export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
 
           <Row gutter={16} justify="space-between">
             <Col>
-              <Text type="secondary">
-                因子筛选功能将在下一版本中提供（P3-12）
-              </Text>
+              <Text type="secondary">更高级的交易筛选将于后续版本提供。</Text>
             </Col>
             <Col>
               <Space>
-                <Button
-                  icon={<ReloadOutlined />}
-                  onClick={handleRefresh}
-                  loading={loading}
-                >
+                <Button icon={<ReloadOutlined />} onClick={handleRefresh} loading={loading}>
                   刷新
                 </Button>
-                <Button
-                  icon={<DownloadOutlined />}
-                  type="primary"
-                  onClick={handleExport}
-                >
-                  导出CSV
+                <Button icon={<DownloadOutlined />} type="primary" onClick={handleExport}>
+                  下载Parquet
                 </Button>
               </Space>
             </Col>
@@ -538,7 +491,6 @@ export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
         </Space>
       </Card>
 
-      {/* 交易表格 */}
       <Card>
         <Table
           columns={columns}
@@ -546,14 +498,23 @@ export const TaskTradesTab: React.FC<TaskTradesTabProps> = ({ task }) => {
           rowKey="tradeId"
           loading={loading}
           pagination={pagination}
-          onChange={(newPagination) => setPagination(newPagination)}
+          onChange={handleTableChange}
           scroll={{ x: 1500, y: 600 }}
           size="small"
         />
       </Card>
+
+      <TradeKLineDrawer
+        task={task}
+        trade={selectedTrade}
+        open={drawerOpen}
+        onClose={() => {
+          setDrawerOpen(false);
+          setSelectedTrade(null);
+        }}
+      />
     </Space>
   );
 };
 
 export default TaskTradesTab;
-

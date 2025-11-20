@@ -1,6 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere, Like, Between } from 'typeorm';
+import * as duckdb from 'duckdb';
+import { access } from 'fs/promises';
+import { InternalServerErrorException } from '@nestjs/common';
 import {
   BacktestTaskEntity,
   BacktestTaskStatus,
@@ -9,9 +12,17 @@ import {
   CreateBacktestTaskDto,
   UpdateBacktestTaskDto,
   ListBacktestTasksDto,
+  ListTaskTradesDto,
+  TaskTradeRecord,
+  TradeFactorSnapshot,
+  TaskBarsQueryDto,
+  TaskBarsResponse,
 } from './dto';
 import { ServiceRegistryService } from '../service-registry/service-registry.service';
 import { BacktestMetricsService } from '../monitoring/backtest-metrics.service';
+import { BACKTEST_RESULTS_ROOT, resolveBacktestResultPath } from '../../config/storage.config';
+import * as path from 'path';
+import { TradingDataService } from '../../trading-data/trading-data.service';
 
 /**
  * 回测任务服务
@@ -26,6 +37,7 @@ export class BacktestTasksService {
     @InjectRepository(BacktestTaskEntity)
     private readonly backtestTaskRepository: Repository<BacktestTaskEntity>,
     private readonly serviceRegistry: ServiceRegistryService,
+    private readonly tradingDataService: TradingDataService,
     private readonly metrics?: BacktestMetricsService,
   ) {}
 
@@ -312,8 +324,14 @@ export class BacktestTasksService {
     };
 
     if (finalStatus === BacktestTaskStatus.COMPLETED) {
-      updateData.resultSummary = payload?.summary ?? task.resultSummary ?? null;
+      const summary = payload?.summary ?? task.resultSummary ?? null;
+      updateData.resultSummary = summary;
       updateData.progress = 100;
+
+      const artifactPath = this.extractTradeArtifactPath(summary);
+      if (artifactPath) {
+        updateData.resultFilePath = artifactPath;
+      }
     }
 
     await this.updateStatus(taskId, finalStatus, updateData);
@@ -419,10 +437,339 @@ export class BacktestTasksService {
     }
   }
 
+  private extractTradeArtifactPath(summary: any): string | null {
+    const artifacts: any[] | undefined = summary?.artifacts;
+    if (!Array.isArray(artifacts)) {
+      return null;
+    }
+    const tradeArtifact = artifacts.find(
+      (item) => item?.type === 'trades/parquet' && typeof item?.path === 'string',
+    );
+    return tradeArtifact?.path ?? null;
+  }
+
+  async getTradeResultPath(taskId: string): Promise<{
+    relativePath: string;
+    absolutePath: string;
+  }> {
+    const task = await this.findOne(taskId);
+    const relativePath =
+      task.resultFilePath ??
+      this.extractTradeArtifactPath(task.resultSummary) ??
+      null;
+
+    if (!relativePath) {
+      throw new NotFoundException('该任务没有可用的交易明细文件');
+    }
+
+    const normalized = this.normalizeResultRelativePath(relativePath);
+    const absolutePath = path.isAbsolute(normalized.absolute)
+      ? normalized.absolute
+      : resolveBacktestResultPath(normalized.relative);
+    return { relativePath: normalized.relative, absolutePath };
+  }
+
+  async listTrades(
+    taskId: string,
+    { page = 1, pageSize = 50 }: ListTaskTradesDto,
+  ): Promise<{
+    trades: TaskTradeRecord[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const { absolutePath } = await this.getTradeResultPath(taskId);
+    try {
+      await access(absolutePath);
+    } catch {
+      throw new NotFoundException('交易明细文件不存在或已被清理');
+    }
+    const safePage = Math.max(1, page);
+    const safePageSize = Math.max(1, Math.min(500, pageSize));
+    const offset = (safePage - 1) * safePageSize;
+    const db = new duckdb.Database(':memory:');
+    const connection = db.connect();
+
+    try {
+      const source = absolutePath.replace(/'/g, "''");
+      const countRows = await this.runDuckDbQuery<{ count: number }>(
+        connection,
+        `SELECT COUNT(*) AS count FROM read_parquet('${source}')`,
+      );
+      const total = Number(countRows?.[0]?.count ?? 0);
+      if (total === 0 || offset >= total) {
+        return {
+          trades: [],
+          total,
+          page: safePage,
+          pageSize: safePageSize,
+        };
+      }
+
+      const rows = await this.runDuckDbQuery<Record<string, any>>(
+        connection,
+        `
+          SELECT *
+          FROM read_parquet('${source}')
+          ORDER BY ts ASC, sequence_id ASC
+          LIMIT ${safePageSize}
+          OFFSET ${offset}
+        `,
+      );
+
+      const trades = rows.map((row) => this.mapTradeRow(row));
+      return {
+        trades,
+        total,
+        page: safePage,
+        pageSize: safePageSize,
+      };
+    } catch (error) {
+      throw new InternalServerErrorException(
+        `读取交易明细失败: ${(error as Error)?.message ?? error}`,
+      );
+    } finally {
+      connection.close();
+      db.close();
+    }
+  }
+
+  async getTaskBars(
+    taskId: string,
+    query: TaskBarsQueryDto,
+  ): Promise<TaskBarsResponse> {
+    const task = await this.findOne(taskId);
+    const dataset = await this.tradingDataService.getDatasetById(task.datasetId);
+
+    const resolution =
+      query.resolution ||
+      task.dataConfig?.timeframe ||
+      dataset.granularity ||
+      '1m';
+
+    const intervalSeconds = this.parseResolutionToSeconds(resolution);
+    if (!intervalSeconds) {
+      throw new BadRequestException(`无法解析时间粒度 ${resolution}`);
+    }
+
+    const beforeBars = Math.max(query.beforeBars ?? 60, 0);
+    const afterBars = Math.max(query.afterBars ?? 60, 0);
+
+    const centerMs = this.resolveCenterTimestamp(query) ?? dataset.timeEnd?.getTime();
+    if (!centerMs || !Number.isFinite(centerMs)) {
+      throw new BadRequestException('缺少有效的时间参数');
+    }
+
+    const fromMs = centerMs - beforeBars * intervalSeconds * 1000;
+    const toMs = centerMs + afterBars * intervalSeconds * 1000;
+
+    const result = await this.tradingDataService.getDatasetCandles(task.datasetId, {
+      resolution,
+      from: Math.floor(fromMs / 1000),
+      to: Math.ceil(toMs / 1000),
+      limit: Math.min(beforeBars + afterBars + 1, 5000),
+    });
+
+    return {
+      taskId,
+      datasetId: task.datasetId,
+      resolution: result.resolution,
+      from: result.from,
+      to: result.to,
+      limit: result.limit,
+      hasMore: result.hasMore,
+      candles: result.candles,
+    };
+  }
+
   private releaseWorkerCapacity(workerId?: string) {
     if (!workerId) {
       return;
     }
     this.serviceRegistry.updateLoad(workerId, -1);
+  }
+
+  private resolveCenterTimestamp(query: TaskBarsQueryDto): number | undefined {
+    if (query.timestampSec !== undefined) {
+      return query.timestampSec * 1000;
+    }
+    if (query.timestamp) {
+      const parsed = Date.parse(query.timestamp);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+    }
+    return undefined;
+  }
+
+  private parseResolutionToSeconds(resolution: string | undefined): number | null {
+    if (!resolution) {
+      return null;
+    }
+    const match = /^(\d+)([smhd])$/i.exec(resolution.trim());
+    if (!match) {
+      return null;
+    }
+    const value = Number(match[1]);
+    if (!Number.isFinite(value) || value <= 0) {
+      return null;
+    }
+    const unit = match[2].toLowerCase();
+    switch (unit) {
+      case 's':
+        return value;
+      case 'm':
+        return value * 60;
+      case 'h':
+        return value * 3600;
+      case 'd':
+        return value * 86400;
+      default:
+        return null;
+    }
+  }
+
+  private runDuckDbQuery<T = Record<string, any>>(
+    connection: duckdb.Connection,
+    sql: string,
+  ): Promise<T[]> {
+    return new Promise((resolve, reject) => {
+      connection.all(sql, (err, rows) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(rows as T[]);
+        }
+      });
+    });
+  }
+
+  private mapTradeRow(row: Record<string, any>): TaskTradeRecord {
+    const factorSnapshot = this.parseFactorSnapshot(row);
+    const positionQuantity = this.toNumber(row.position_qty);
+    const positionAvgEntry = this.toNumber(row.position_avg_entry);
+    const context = this.safeParseJson(row.context_json);
+    const exitSegments = this.parseExitSegments(context);
+    return {
+      taskId: row.task_id,
+      sessionId: row.session_id,
+      strategyId: row.strategy_id,
+      scriptVersionId: row.script_version_id ?? undefined,
+      symbol: row.symbol,
+      side: row.side,
+      type: row.trade_type,
+      quantity: this.toNumber(row.quantity),
+      price: this.toNumber(row.price),
+      realizedPnl: this.toNumber(row.realized_pnl),
+      unrealizedPnl: this.toNumber(row.unrealized_pnl),
+      fees: this.toNumber(row.fees),
+      feeCurrency: row.fee_currency ?? undefined,
+      liquidity: row.liquidity ?? undefined,
+      timestamp: this.formatTimestamp(row.ts),
+      sequenceId: row.sequence_id ?? undefined,
+      position:
+        positionQuantity !== null || positionAvgEntry !== null || row.position_side
+          ? {
+              quantity: positionQuantity,
+              avgEntryPrice: positionAvgEntry,
+              side: row.position_side ?? null,
+            }
+          : undefined,
+      reason: row.reason ?? null,
+      factorSnapshot,
+      entryPrice: this.toNumber(row.entry_price),
+      exitPrice: this.toNumber(row.exit_price),
+      stopPrice: this.toNumber(row.stop_price),
+      targetPrice: this.toNumber(row.target_price),
+      barTimestamp: this.formatTimestamp(row.bar_ts),
+      entryTimestamp: context?.entryTimestamp ? this.formatTimestamp(context.entryTimestamp) : null,
+      exitTimestamp: context?.exitTimestamp
+        ? this.formatTimestamp(context.exitTimestamp)
+        : this.formatTimestamp(row.ts),
+      exitSegments: exitSegments ?? undefined,
+      status: context?.status ?? null,
+      context: context ?? undefined,
+    };
+  }
+
+  private parseFactorSnapshot(row: Record<string, any>): TradeFactorSnapshot | undefined {
+    const system = this.safeParseJson(row.factor_system);
+    const custom = this.safeParseJson(row.factor_custom);
+    const snapshot: TradeFactorSnapshot = {};
+    if (system && Object.keys(system).length > 0) {
+      snapshot.system = system;
+    }
+    if (custom && Object.keys(custom).length > 0) {
+      snapshot.custom = custom;
+    }
+    return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+  }
+
+  private safeParseJson(value: any): Record<string, any> | undefined {
+    if (!value || typeof value !== 'string') {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(value);
+      return typeof parsed === 'object' && parsed !== null ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private toNumber(value: any): number | null {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  private formatTimestamp(value: any): string | null {
+    if (!value) {
+      return null;
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    const num = Number(value);
+    if (!Number.isFinite(num)) {
+      return null;
+    }
+    const millis = num > 1e12 ? num : num * 1000;
+    return new Date(millis).toISOString();
+  }
+
+  private parseExitSegments(context?: Record<string, any>) {
+    if (!context?.exitSegments || !Array.isArray(context.exitSegments)) {
+      return undefined;
+    }
+    return context.exitSegments.map((segment: any) => ({
+      price: this.toNumber(segment.price) ?? 0,
+      quantity: this.toNumber(segment.quantity) ?? 0,
+      timestamp: this.formatTimestamp(segment.timestamp) ?? null,
+      barTimestamp: this.formatTimestamp(segment.barTimestamp),
+      reason: typeof segment.reason === 'string' ? segment.reason : undefined,
+    }));
+  }
+
+  private normalizeResultRelativePath(relativePath: string) {
+    const normalized = relativePath.replace(/\\/g, '/');
+    if (path.isAbsolute(normalized)) {
+      const rel = path.relative(BACKTEST_RESULTS_ROOT, normalized);
+      return { relative: rel, absolute: normalized };
+    }
+    const match = normalized.match(/backtests\/(.+)$/);
+    if (match) {
+      const trimmed = match[1];
+      return { relative: trimmed, absolute: path.resolve(BACKTEST_RESULTS_ROOT, trimmed) };
+    }
+    return { relative: normalized, absolute: path.resolve(BACKTEST_RESULTS_ROOT, normalized) };
   }
 }

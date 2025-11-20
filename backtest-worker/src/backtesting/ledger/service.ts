@@ -21,6 +21,7 @@ import {
   TradeFilter,
   TradeStats,
   PnLCalculator,
+  TradeSide,
 } from './interfaces';
 import { SimplePnLCalculator } from './pnl-calculator';
 
@@ -33,6 +34,8 @@ export class LedgerServiceImpl implements LedgerService {
   private config: LedgerServiceConfig;
   private pnlCalculator: PnLCalculator;
   private stats: TradeStats;
+  private activePosition: AggregatedPosition | null = null;
+  private readonly epsilon = 1e-8;
 
   constructor(config: LedgerServiceConfig) {
     this.config = {
@@ -69,25 +72,7 @@ export class LedgerServiceImpl implements LedgerService {
    * 记录交易
    */
   async recordTrade(trade: TradeRecord): Promise<void> {
-    // 添加到缓冲区
-    this.buffer.push(trade);
-    this.trades.push(trade);
-
-    // 更新统计
-    this.updateStats(trade);
-
-    this.log('debug', `Trade recorded: ${trade.tradeId}`, {
-      tradeId: trade.tradeId,
-      symbol: trade.symbol,
-      side: trade.side,
-      quantity: trade.quantity,
-      price: trade.price,
-    });
-
-    // 自动刷新
-    if (this.config.autoFlush && this.buffer.length >= (this.config.bufferSize || 1000)) {
-      await this.flush();
-    }
+    this.processTrade(trade);
   }
 
   /**
@@ -108,6 +93,7 @@ export class LedgerServiceImpl implements LedgerService {
    * 查询交易
    */
   async getTrades(filter?: TradeFilter): Promise<TradeRecord[]> {
+    this.flushDanglingPosition();
     if (!filter) {
       return [...this.trades];
     }
@@ -172,6 +158,7 @@ export class LedgerServiceImpl implements LedgerService {
    */
   async exportToJSON(outputPath: string): Promise<void> {
     await this.flush();
+    this.flushDanglingPosition();
 
     const dir = path.dirname(outputPath);
     await fs.mkdir(dir, { recursive: true });
@@ -194,6 +181,7 @@ export class LedgerServiceImpl implements LedgerService {
    */
   async exportToCSV(outputPath: string): Promise<void> {
     await this.flush();
+    this.flushDanglingPosition();
 
     const dir = path.dirname(outputPath);
     await fs.mkdir(dir, { recursive: true });
@@ -257,6 +245,7 @@ export class LedgerServiceImpl implements LedgerService {
   reset(): void {
     this.trades = [];
     this.buffer = [];
+    this.activePosition = null;
     this.stats = {
       totalTrades: 0,
       totalPnl: '0',
@@ -278,6 +267,203 @@ export class LedgerServiceImpl implements LedgerService {
   // ========================================================================
   // 私有方法
   // ========================================================================
+  private processTrade(trade: TradeRecord) {
+    if (trade.type === 'open') {
+      this.applyOpen(trade);
+    } else if (trade.type === 'close') {
+      this.applyClose(trade);
+    } else {
+      this.log('warn', `Unsupported trade type ${trade.type}, skipping aggregation`, {
+        tradeId: trade.tradeId,
+      });
+    }
+  }
+
+  private applyOpen(trade: TradeRecord) {
+    const quantity = this.toNumber(trade.quantity);
+    const fees = this.toNumber(trade.fees);
+    if (!this.activePosition) {
+      this.activePosition = this.createPosition(trade, quantity, fees);
+      return;
+    }
+
+    if (this.activePosition.side === trade.side) {
+      const position = this.activePosition;
+      const totalQty = position.totalQuantity + quantity;
+      const avg =
+        (position.avgEntryPrice * position.totalQuantity + this.toNumber(trade.price) * quantity) /
+        Math.max(this.epsilon, totalQty);
+      position.totalQuantity = totalQty;
+      position.remainingQuantity += quantity;
+      position.avgEntryPrice = avg;
+      position.fees += fees;
+      position.entryTrade = position.entryTrade || trade;
+      position.stopPrice = position.stopPrice ?? this.toNumber(trade.stopPrice);
+      position.targetPrice = position.targetPrice ?? this.toNumber(trade.targetPrice);
+      return;
+    }
+
+    // 方向不同，先强制平掉当前仓位，再创建新仓位
+    this.forceClosePosition(trade);
+    this.activePosition = this.createPosition(trade, quantity, fees);
+  }
+
+  private applyClose(trade: TradeRecord) {
+    if (!this.activePosition) {
+      this.activePosition = this.createSyntheticPositionFromClose(trade);
+    }
+
+    const position = this.activePosition!;
+    const quantity = this.toNumber(trade.quantity);
+    const segmentQty = Math.min(quantity, position.remainingQuantity);
+    position.remainingQuantity = Math.max(0, position.remainingQuantity - segmentQty);
+    position.realizedPnl += this.toNumber(trade.realizedPnl);
+    position.fees += this.toNumber(trade.fees);
+    position.exitPrice = this.toNumber(trade.price);
+    position.exitTimestamp = trade.timestamp;
+    position.exitBarTimestamp = trade.barTimestamp ?? position.exitBarTimestamp;
+    position.lastReason = trade.reason ?? position.lastReason;
+    position.exitSegments.push({
+      price: this.toNumber(trade.price),
+      quantity: segmentQty,
+      timestamp: trade.timestamp,
+      barTimestamp: trade.barTimestamp,
+      reason: trade.reason,
+    });
+
+    if (position.remainingQuantity <= this.epsilon) {
+      const aggregated = this.buildAggregatedTrade(position);
+      this.trades.push(aggregated);
+      this.updateStats(aggregated);
+      this.activePosition = null;
+    }
+  }
+
+  private createPosition(trade: TradeRecord, quantity: number, fees: number): AggregatedPosition {
+    const entryPrice = this.toNumber(trade.entryPrice ?? trade.price);
+    return {
+      id: nanoid(),
+      entryTrade: trade,
+      side: trade.side,
+      totalQuantity: quantity,
+      remainingQuantity: quantity,
+      avgEntryPrice: entryPrice,
+      entryTimestamp: trade.timestamp,
+      entryBarTimestamp: trade.barTimestamp,
+      stopPrice: this.toNumber(trade.stopPrice),
+      targetPrice: this.toNumber(trade.targetPrice),
+      realizedPnl: 0,
+      fees,
+      exitSegments: [],
+      lastReason: trade.reason,
+    };
+  }
+
+  private createSyntheticPositionFromClose(trade: TradeRecord): AggregatedPosition {
+    const syntheticOpen: TradeRecord = {
+      ...trade,
+      tradeId: `synthetic-${trade.tradeId}`,
+      type: 'open',
+      side: trade.side === 'buy' ? 'sell' : ('buy' as TradeSide),
+      price: trade.price,
+      quantity: trade.quantity,
+      realizedPnl: '0',
+      fees: '0',
+    };
+    return this.createPosition(syntheticOpen, this.toNumber(trade.quantity), 0);
+  }
+
+  private buildAggregatedTrade(position: AggregatedPosition): TradeRecord {
+    const entryTrade = position.entryTrade;
+    const exitPrice = position.exitPrice ?? position.avgEntryPrice;
+    return {
+      taskId: entryTrade.taskId,
+      tradeId: position.id,
+      sessionId: entryTrade.sessionId,
+      strategyId: entryTrade.strategyId,
+      scriptVersionId: entryTrade.scriptVersionId,
+      symbol: entryTrade.symbol,
+      intentId: entryTrade.intentId,
+      orderId: entryTrade.orderId,
+      fillId: entryTrade.fillId,
+      side: entryTrade.side,
+      type: 'close',
+      quantity: position.totalQuantity.toFixed(8),
+      price: position.avgEntryPrice.toFixed(8),
+      realizedPnl: position.realizedPnl.toFixed(8),
+      unrealizedPnl: '0',
+      fees: position.fees.toFixed(8),
+      feeCurrency: entryTrade.feeCurrency,
+      liquidity: entryTrade.liquidity,
+      timestamp: position.exitTimestamp ?? entryTrade.timestamp,
+      sequenceId: entryTrade.sequenceId,
+      position: {
+        quantity: '0',
+        avgEntryPrice: position.avgEntryPrice.toFixed(8),
+        side: entryTrade.side === 'buy' ? 'long' : 'short',
+      },
+      factorSnapshot: entryTrade.factorSnapshot,
+      reason: entryTrade.reason,
+      entryPrice: entryTrade.entryPrice ?? entryTrade.price,
+      exitPrice: exitPrice.toFixed(8),
+      stopPrice: entryTrade.stopPrice,
+      targetPrice: entryTrade.targetPrice,
+      barTimestamp: position.exitBarTimestamp ?? entryTrade.barTimestamp,
+      context: {
+        exitSegments: position.exitSegments,
+        status: this.resolveTradeStatus(position),
+        entryTimestamp: position.entryTimestamp,
+        entryBarTimestamp: position.entryBarTimestamp,
+        exitTimestamp: position.exitTimestamp ?? entryTrade.timestamp,
+        exitBarTimestamp: position.exitBarTimestamp ?? entryTrade.barTimestamp,
+      },
+    };
+  }
+
+  private resolveTradeStatus(position: AggregatedPosition): string {
+    const reason = position.lastReason?.toLowerCase();
+    if (reason?.includes('take_profit')) {
+      return 'take_profit';
+    }
+    if (reason?.includes('stop_loss')) {
+      return 'stop_loss';
+    }
+    if (Math.abs(position.realizedPnl) <= this.epsilon) {
+      return 'break_even';
+    }
+    return position.realizedPnl > 0 ? 'profit' : 'loss';
+  }
+
+  private flushDanglingPosition() {
+    if (!this.activePosition) {
+      return;
+    }
+    const aggregated = this.buildAggregatedTrade(this.activePosition);
+    this.trades.push(aggregated);
+    this.updateStats(aggregated);
+    this.activePosition = null;
+  }
+
+  private forceClosePosition(trade: TradeRecord) {
+    if (!this.activePosition) {
+      return;
+    }
+    const aggregated = this.buildAggregatedTrade(this.activePosition);
+    this.trades.push(aggregated);
+    this.updateStats(aggregated);
+    this.activePosition = null;
+  }
+
+  private toNumber(value: string | number | null | undefined): number {
+    if (value === null || value === undefined) {
+      return 0;
+    }
+    if (typeof value === 'number') {
+      return value;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
 
   /**
    * 更新统计信息
@@ -379,10 +565,37 @@ export class LedgerServiceImpl implements LedgerService {
   }
 }
 
+interface ExitSegment {
+  price: number;
+  quantity: number;
+  timestamp: string;
+  barTimestamp?: string;
+  reason?: string;
+}
+
+interface AggregatedPosition {
+  id: string;
+  entryTrade: TradeRecord;
+  side: TradeSide;
+  totalQuantity: number;
+  remainingQuantity: number;
+  avgEntryPrice: number;
+  entryTimestamp: string;
+  entryBarTimestamp?: string;
+  stopPrice?: number;
+  targetPrice?: number;
+  realizedPnl: number;
+  fees: number;
+  exitPrice?: number;
+  exitTimestamp?: string;
+  exitBarTimestamp?: string;
+  exitSegments: ExitSegment[];
+  lastReason?: string;
+}
+
 /**
  * 创建账簿服务
  */
 export function createLedgerService(config: LedgerServiceConfig): LedgerService {
   return new LedgerServiceImpl(config);
 }
-

@@ -277,7 +277,7 @@ runTest('统计合成数据', () => {
 // ========================================
 console.log('\n📋 测试组 3: QueryBuilder\n');
 
-const builder = new DefaultDuckDBQueryBuilder('storage/datasets');
+const builder = new DefaultDuckDBQueryBuilder('../backend/storage/datasets');
 
 runTest('构建范围查询', () => {
   const sql = builder.buildRangeQuery(

@@ -32,6 +32,9 @@ export type TradeType = 'open' | 'close' | 'adjust';
  * 交易记录
  */
 export interface TradeRecord {
+  /** 任务ID */
+  taskId: string;
+  
   /** 交易ID */
   tradeId: string;
   
@@ -40,6 +43,9 @@ export interface TradeRecord {
   
   /** 策略ID */
   strategyId: string;
+  
+  /** 脚本版本ID */
+  scriptVersionId?: string;
   
   /** 交易对 */
   symbol: string;
@@ -98,6 +104,30 @@ export interface TradeRecord {
   
   /** 特征快照 */
   features?: Record<string, number | string>;
+  
+  /** 因子快照 */
+  factorSnapshot?: {
+    system?: Record<string, number | string>;
+    custom?: Record<string, number | string>;
+  };
+  
+  /** 触发原因 */
+  reason?: string;
+
+  /** 入场价 */
+  entryPrice?: string;
+
+  /** 出场价 */
+  exitPrice?: string;
+
+  /** 止损价 */
+  stopPrice?: string;
+
+  /** 止盈价 */
+  targetPrice?: string;
+
+  /** 对应 K 线时间 */
+  barTimestamp?: string;
   
   /** 额外上下文 */
   context?: Record<string, unknown>;
@@ -387,4 +417,3 @@ export const LEDGER_PARQUET_SCHEMA: ParquetSchema = {
   position_avg_entry_price: { type: 'UTF8', optional: true },
   position_side: { type: 'UTF8', optional: true },
 };
-

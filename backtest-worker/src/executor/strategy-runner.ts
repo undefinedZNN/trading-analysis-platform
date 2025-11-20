@@ -27,6 +27,10 @@ import {
   ThreeLineMomentumStrategy,
   parameters as tlmParameters,
 } from '../backtesting/strategies/three-line-momentum.strategy';
+import {
+  ThreeLineDmiStrategy,
+  parameters as tldmiParameters,
+} from '../backtesting/strategies/three-line-dmi.strategy';
 import { LedgerServiceImpl } from '../backtesting/ledger/service';
 import { TradeRecord, TradeStats } from '../backtesting/ledger/interfaces';
 import { RiskEngineImpl } from '../backtesting/risk/engine';
@@ -41,6 +45,7 @@ type StrategyType =
   | 'bollinger-bands'
   | 'rsi-mean-reversion'
   | 'three-line-momentum'
+  | 'three-line-dmi'
   | 'dynamic';
 
 interface StrategyLifecycle {
@@ -54,6 +59,8 @@ interface StrategyIntentInput {
   quantity: string;
   tif?: 'GTC' | 'IOC' | 'FOK';
   reason?: string;
+  metadata?: Record<string, unknown>;
+  tradePlan?: StrategyTradePlan;
 }
 
 interface StrategySession {
@@ -72,12 +79,26 @@ interface StrategySession {
   scriptState: unknown;
   currentBar: HistoricalBar | null;
   dynamicStrategy?: LoadedDynamicStrategy | null;
+  systemFactors?: Record<string, number>;
   account: {
     cash: number;
     positionQty: number;
     avgEntryPrice: number;
     realizedPnl: number;
   };
+}
+
+type FactorSnapshot = {
+  system?: Record<string, number>;
+  custom?: Record<string, number | string>;
+};
+
+interface StrategyTradePlan {
+  entryPrice?: string | number;
+  exitPrice?: string | number;
+  stopPrice?: string | number;
+  targetPrice?: string | number;
+  barTimestamp?: string | number | Date;
 }
 
 export interface StrategyResultMetrics {
@@ -92,8 +113,14 @@ export interface StrategyResultMetrics {
   };
 }
 
+export interface StrategyRunResult {
+  metrics: StrategyResultMetrics;
+  trades: TradeRecord[];
+}
+
 class StrategyContextImpl {
   private session?: StrategySession;
+  private pendingTradePlan?: StrategyTradePlan;
 
   constructor(private readonly runner: StrategyRunner, private readonly taskId: string) { }
 
@@ -136,6 +163,14 @@ class StrategyContextImpl {
     }
   }
 
+  setTradePlan(plan?: StrategyTradePlan | null) {
+    if (!plan) {
+      this.pendingTradePlan = undefined;
+      return;
+    }
+    this.pendingTradePlan = { ...plan };
+  }
+
   setCurrentBar(bar: HistoricalBar | null) {
     if (this.session) {
       this.session.currentBar = bar;
@@ -154,7 +189,22 @@ class StrategyContextImpl {
     if (!this.session) {
       return;
     }
-    void this.runner.dispatchIntent(this.session, intent);
+    const { tradePlan, ...intentWithoutPlan } = intent;
+    const metadata: Record<string, unknown> = {
+      ...(intentWithoutPlan.metadata ?? {}),
+    };
+    const resolvedPlan = tradePlan ?? this.pendingTradePlan;
+    this.pendingTradePlan = undefined;
+    if (resolvedPlan && metadata.tradePlan === undefined) {
+      metadata.tradePlan = resolvedPlan;
+    }
+    const normalizedMetadata =
+      Object.keys(metadata).length > 0 ? metadata : undefined;
+
+    void this.runner.dispatchIntent(this.session, {
+      ...intentWithoutPlan,
+      metadata: normalizedMetadata,
+    });
   }
 
   submitOrder(intent: StrategyIntentInput): void {
@@ -196,8 +246,8 @@ export class StrategyRunner {
         session.priceHistory.shift();
       }
 
-      session.context.setCurrentBar(bar);
       const enrichedBar = this.enrichBarWithFeatures(session, bar);
+      session.context.setCurrentBar(enrichedBar);
       await Promise.resolve(session.strategy.onBar(enrichedBar));
       await session.engine.processBars([this.toBarEvent(config, bar)]);
     }
@@ -207,14 +257,14 @@ export class StrategyRunner {
     return this.metricsLoggingEnabled;
   }
 
-  complete(taskId: string): StrategyResultMetrics | undefined {
+  async complete(taskId: string): Promise<StrategyRunResult | undefined> {
     const session = this.sessions.get(taskId);
     if (!session) {
       return undefined;
     }
 
     this.sessions.delete(taskId);
-    return {
+    const metrics: StrategyResultMetrics = {
       execution: session.engine.getStats(),
       trades: session.ledger.getStats(),
       account: {
@@ -224,6 +274,14 @@ export class StrategyRunner {
         realizedPnl: session.account.realizedPnl,
         equity: this.getEquity(session),
       },
+    };
+
+    const trades = await session.ledger.getTrades();
+    session.ledger.reset();
+
+    return {
+      metrics,
+      trades,
     };
   }
 
@@ -351,6 +409,9 @@ export class StrategyRunner {
 
   private resolveStrategyType(config: TaskConfigDto): StrategyType {
     const id = String(config.parameters?.strategyType ?? config.strategyId ?? '').toLowerCase();
+    if (id.includes('dmi')) {
+      return 'three-line-dmi';
+    }
     if (id.includes('three-line') || (id.includes('three') && id.includes('momentum'))) {
       return 'three-line-momentum';
     }
@@ -374,7 +435,9 @@ export class StrategyRunner {
           ? rsiParameters
           : type === 'three-line-momentum'
             ? tlmParameters
-            : maParameters;
+            : type === 'three-line-dmi'
+              ? tldmiParameters
+              : maParameters;
 
     const params: Record<string, any> = {};
     for (const key of Object.keys(defs)) {
@@ -396,6 +459,8 @@ export class StrategyRunner {
         return new RSIMeanReversionStrategy(params, context);
       case 'three-line-momentum':
         return new ThreeLineMomentumStrategy(params, context);
+      case 'three-line-dmi':
+        return new ThreeLineDmiStrategy(params, context);
       default:
         return new MACrossStrategy(params, context);
     }
@@ -421,26 +486,41 @@ export class StrategyRunner {
 
   async dispatchIntent(session: StrategySession, intent: StrategyIntentInput) {
     try {
-      const resolvedQuantity = this.resolveIntentQuantity(session, intent);
+      const { tradePlan, ...intentWithoutPlan } = intent;
+      const resolvedQuantity = this.resolveIntentQuantity(session, intentWithoutPlan);
       if (!resolvedQuantity) {
         this.logger.error(`Invalid intent quantity`, {
           taskId: session.taskId,
-          quantity: intent.quantity,
-          side: intent.side,
+          quantity: intentWithoutPlan.quantity,
+          side: intentWithoutPlan.side,
           positionQty: session.account.positionQty,
         });
         return;
+      }
+
+      const factorSnapshot = this.buildFactorSnapshot(session, intentWithoutPlan);
+      const metadata: Record<string, any> = {
+        ...(intentWithoutPlan.metadata ?? {}),
+      };
+      if (intentWithoutPlan.reason && metadata.reason === undefined) {
+        metadata.reason = intentWithoutPlan.reason;
+      }
+      if (factorSnapshot) {
+        metadata.factorSnapshot = factorSnapshot;
+      }
+      if (tradePlan && metadata.tradePlan === undefined) {
+        metadata.tradePlan = tradePlan;
       }
 
       const baseIntent: OrderIntentPayload = {
         intentId: nanoid(),
         strategyId: session.config.strategyId,
         symbol: session.config.datasetId,
-        side: intent.side,
-        type: intent.type,
+        side: intentWithoutPlan.side,
+        type: intentWithoutPlan.type,
         quantity: resolvedQuantity,
-        tif: intent.tif ?? 'IOC',
-        metadata: intent.reason ? { reason: intent.reason } : undefined,
+        tif: intentWithoutPlan.tif ?? 'IOC',
+        metadata: Object.keys(metadata).length ? metadata : undefined,
       };
 
       const decision: RiskDecisionResult = await session.riskEngine.evaluate(baseIntent);
@@ -504,11 +584,97 @@ export class StrategyRunner {
     }
 
     if (Object.keys(features).length === 0) {
+      session.systemFactors = undefined;
       return bar;
     }
 
+    session.systemFactors = this.normalizeFactorMap(features);
     return { ...bar, features };
   }
+
+  private normalizeFactorMap(source: Record<string, any>): Record<string, number> {
+    const result: Record<string, number> = {};
+
+    const visit = (prefix: string, value: any) => {
+      if (value === null || value === undefined) {
+        return;
+      }
+      if (typeof value === 'object' && !Array.isArray(value)) {
+        for (const [childKey, childValue] of Object.entries(value)) {
+          const nextKey = prefix ? `${prefix}.${childKey}` : childKey;
+          visit(nextKey, childValue);
+        }
+        return;
+      }
+      const num =
+        typeof value === 'number'
+          ? value
+          : value === '' || value === null
+            ? NaN
+            : Number(value);
+      if (Number.isFinite(num)) {
+        result[prefix] = num;
+      }
+    };
+
+    for (const [key, value] of Object.entries(source)) {
+      visit(key, value);
+    }
+
+    return result;
+  }
+
+  private buildFactorSnapshot(
+    session: StrategySession,
+    intent: StrategyIntentInput,
+  ): FactorSnapshot | undefined {
+    const system =
+      session.systemFactors && Object.keys(session.systemFactors).length
+        ? { ...session.systemFactors }
+        : undefined;
+    const custom = this.extractCustomFactors(intent.metadata);
+
+    if (!system && !custom) {
+      return undefined;
+    }
+
+    return {
+      system,
+      custom,
+    };
+  }
+
+  private extractCustomFactors(
+    metadata?: Record<string, unknown>,
+  ): Record<string, number | string> | undefined {
+    if (!metadata) {
+      return undefined;
+    }
+
+    const candidate =
+      (metadata as any)?.customFactors ?? (metadata as any)?.factors;
+    if (!candidate || typeof candidate !== 'object') {
+      return undefined;
+    }
+
+    const result: Record<string, number | string> = {};
+    for (const [key, value] of Object.entries(candidate as Record<string, any>)) {
+      if (value === undefined || value === null) {
+        continue;
+      }
+      if (typeof value === 'number' || typeof value === 'string') {
+        result[key] = value;
+      } else {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) {
+          result[key] = parsed;
+        }
+      }
+    }
+
+    return Object.keys(result).length ? result : undefined;
+  }
+
 
   private async handleExecutionReport(session: StrategySession, report: ExecutionReportPayload) {
     try {
@@ -533,16 +699,47 @@ export class StrategyRunner {
         }
         : undefined;
 
+    const metadata = (report as any)?.metadata as Record<string, any> | undefined;
+    const factorSnapshot =
+      (metadata?.factorSnapshot as FactorSnapshot | undefined) ??
+      (session.systemFactors
+        ? { system: { ...session.systemFactors } }
+        : undefined);
+
+    const tradePlan = this.extractTradePlan(metadata);
+    const entryPrice =
+      tradePlan?.entryPrice ??
+      (report.side === 'buy' ? this.resolvePriceValue(report.lastFill.price) : undefined);
+    const exitPrice =
+      tradePlan?.exitPrice ??
+      (report.side === 'sell' ? this.resolvePriceValue(report.lastFill.price) : undefined);
+    const barTimestamp =
+      tradePlan?.barTimestamp ??
+      session.currentBar?.timestamp ??
+      report.lastFill.timestamp;
+
+    const positionEffect = (metadata?.positionEffect as string | undefined)?.toLowerCase();
+    const tradeType =
+      positionEffect && positionEffect.startsWith('open')
+        ? 'open'
+        : positionEffect && positionEffect.startsWith('close')
+          ? 'close'
+          : report.side === 'buy'
+            ? 'open'
+            : 'close';
+
     const trade: TradeRecord = {
+      taskId: session.taskId,
       tradeId: report.lastFill.fillId,
       sessionId: session.sessionId,
       strategyId: session.config.strategyId,
+      scriptVersionId: this.resolveScriptVersionId(session),
       symbol: report.symbol,
       intentId: report.intentId,
       orderId: report.orderId,
       fillId: report.lastFill.fillId,
       side: report.side,
-      type: report.side === 'buy' ? 'open' : 'close',
+      type: tradeType,
       quantity: report.lastFill.quantity,
       price: report.lastFill.price,
       realizedPnl: pnl,
@@ -553,9 +750,93 @@ export class StrategyRunner {
       timestamp: report.lastFill.timestamp,
       sequenceId: report.lastFill.fillId,
       position,
+      factorSnapshot,
+      reason: metadata?.reason,
+      entryPrice,
+      exitPrice,
+      stopPrice: tradePlan?.stopPrice,
+      targetPrice: tradePlan?.targetPrice,
+      barTimestamp,
     };
 
     await session.ledger.recordTrade(trade);
+  }
+
+  private extractTradePlan(
+    metadata?: Record<string, any>,
+  ): {
+      entryPrice?: string;
+      exitPrice?: string;
+      stopPrice?: string;
+      targetPrice?: string;
+      barTimestamp?: string;
+    } | undefined {
+    if (!metadata) {
+      return undefined;
+    }
+    const candidate =
+      typeof metadata.tradePlan === 'object' && metadata.tradePlan !== null
+        ? (metadata.tradePlan as Record<string, any>)
+        : undefined;
+    if (!candidate) {
+      return undefined;
+    }
+
+    const plan = {
+      entryPrice: this.resolvePriceValue(
+        candidate.entryPrice ?? candidate.entry ?? candidate.entry_price,
+      ),
+      exitPrice: this.resolvePriceValue(
+        candidate.exitPrice ?? candidate.exit ?? candidate.exit_price,
+      ),
+      stopPrice: this.resolvePriceValue(
+        candidate.stopPrice ?? candidate.stop ?? candidate.stop_price,
+      ),
+      targetPrice: this.resolvePriceValue(
+        candidate.targetPrice ?? candidate.target ?? candidate.target_price,
+      ),
+      barTimestamp: this.resolveTimestamp(candidate.barTimestamp ?? candidate.bar_ts),
+    };
+
+    const hasValue = Object.values(plan).some((value) => value !== undefined);
+    return hasValue ? plan : undefined;
+  }
+
+  private resolvePriceValue(value: unknown): string | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length ? trimmed : undefined;
+    }
+    const num = Number(value);
+    if (!Number.isFinite(num)) {
+      return undefined;
+    }
+    return num.toFixed(6);
+  }
+
+  private resolveTimestamp(value: unknown): string | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length ? trimmed : undefined;
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    const num = Number(value);
+    if (!Number.isFinite(num)) {
+      return undefined;
+    }
+    if (num <= 0) {
+      return undefined;
+    }
+    const millis = num > 1e12 ? num : num * 1000;
+    return new Date(millis).toISOString();
   }
 
   private updateAccountWithFill(session: StrategySession, report: ExecutionReportPayload): string {
@@ -588,6 +869,18 @@ export class StrategyRunner {
 
     session.lastPrice = price;
     return realized.toFixed(2);
+  }
+
+  private resolveScriptVersionId(session: StrategySession): string | undefined {
+    const paramVersion = session.config.parameters?.scriptVersionId;
+    if (typeof paramVersion === 'string' && paramVersion.length > 0) {
+      return paramVersion;
+    }
+    const scriptMeta = (session.config as any)?.script;
+    if (scriptMeta?.scriptVersionId && typeof scriptMeta.scriptVersionId === 'string') {
+      return scriptMeta.scriptVersionId;
+    }
+    return undefined;
   }
 
   public getEquity(session: StrategySession): number {

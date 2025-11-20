@@ -3,3 +3,5 @@ export * from './update-backtest-task.dto';
 export * from './list-backtest-tasks.dto';
 export * from './list-task-logs.dto';
 export * from './worker-callback.dto';
+export * from './list-task-trades.dto';
+export * from './task-bars.dto';

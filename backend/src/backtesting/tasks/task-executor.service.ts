@@ -587,12 +587,12 @@ export class TaskExecutorService {
     this.logger.log(`Task ${taskId} completed successfully`);
     
     try {
+      const task = await this.tasksService.findOne(taskId);
       // 1. 提取结果摘要
-      const resultSummary = this.extractResultSummary(result);
+      const resultSummary = this.extractResultSummary(task, result);
       
       // 2. 保存结果文件路径（如果有）
-      // TODO: 实现详细结果文件保存
-      const resultFilePath = undefined;
+      const resultFilePath = this.extractTradeArtifactPath(resultSummary) ?? undefined;
       
       // 3. 更新任务状态
       await this.tasksService.updateStatus(taskId, BacktestTaskStatus.COMPLETED);
@@ -630,20 +630,65 @@ export class TaskExecutorService {
    * @param result Orchestrator 执行结果
    * @returns 结果摘要
    */
-  private extractResultSummary(result: any): ResultSummary {
-    // TODO: 根据实际的 Orchestrator 结果格式调整
+  private extractResultSummary(task: BacktestTaskEntity, result: any): ResultSummary {
+    const initialCapital =
+      (task.executionConfig as any)?.initialCapital ??
+      result?.portfolio?.initialCapital ??
+      0;
+    const endingEquity = result?.portfolio?.equity ?? initialCapital;
+    const tradesArray = Array.isArray(result?.trades) ? result.trades : [];
+    const totalTrades =
+      tradesArray.length ||
+      result?.metrics?.totalTrades ||
+      0;
+    const winningTrades = tradesArray.length
+      ? tradesArray.filter((trade: any) => Number(trade?.realizedPnl ?? 0) > 0).length
+      : result?.metrics?.winningTrades || 0;
+    const winRate =
+      totalTrades > 0
+        ? winningTrades / totalTrades
+        : result?.metrics?.winRate ?? 0;
+    const totalPnl = endingEquity - initialCapital;
+    const totalFees = result?.metrics?.totalFees ?? 0;
+    const profitFactor = result?.metrics?.profitFactor ?? 0;
+    const winRatePercent = winRate * 100;
+    const returnRatio = initialCapital > 0 ? totalPnl / initialCapital : 0;
+    const returnPercent = returnRatio * 100;
+
     return {
-      totalReturn: result?.metrics?.totalReturn || 0,
-      annualizedReturn: result?.metrics?.annualizedReturn || 0,
-      maxDrawdown: result?.metrics?.maxDrawdown || 0,
-      sharpeRatio: result?.metrics?.sharpeRatio || 0,
-      winRate: result?.metrics?.winRate || 0,
-      profitLossRatio: result?.metrics?.profitLossRatio || 0,
-      totalTrades: result?.trades?.length || 0,
-      finalCapital: result?.portfolio?.equity || 0,
-      processedBars: result?.processedBars || 0,
-      executionTime: result?.executionTime || 0,
+      taskId: task.taskId,
+      strategyId: task.strategyId,
+      scriptVersionId: task.scriptVersionId,
+      initialCapital,
+      endingEquity,
+      returnPct: returnRatio,
+      totalTrades,
+      winningTrades,
+      winRate: winRatePercent,
+      totalPnl,
+      totalFees,
+      profitFactor,
+      artifacts: result?.artifacts ?? [],
+      finalCapital: endingEquity,
+      totalReturn: result?.metrics?.totalReturn ?? returnPercent,
+      annualizedReturn: result?.metrics?.annualizedReturn ?? returnPercent,
+      maxDrawdown: result?.metrics?.maxDrawdown ?? 0,
+      sharpeRatio: result?.metrics?.sharpeRatio ?? 0,
+      profitLossRatio: result?.metrics?.profitLossRatio ?? profitFactor ?? 0,
+      processedBars: result?.metrics?.processedBars ?? 0,
+      executionTime: result?.metrics?.executionTime ?? 0,
     };
+  }
+
+  private extractTradeArtifactPath(summary?: ResultSummary | null): string | null {
+    const artifacts: any[] | undefined = summary?.artifacts as any[];
+    if (!Array.isArray(artifacts)) {
+      return null;
+    }
+    const artifact = artifacts.find(
+      (item) => item?.type === 'trades/parquet' && typeof item?.path === 'string',
+    );
+    return artifact?.path ?? null;
   }
 
   /**

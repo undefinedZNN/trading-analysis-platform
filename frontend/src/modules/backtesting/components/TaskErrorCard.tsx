@@ -3,7 +3,6 @@ import { Card, Space, Alert, Collapse, Typography } from 'antd';
 import { CloseCircleOutlined, WarningOutlined } from '@ant-design/icons';
 import { type BacktestTask } from '../../../shared/api/backtestTasks';
 
-const { Panel } = Collapse;
 const { Text } = Typography;
 
 interface TaskErrorCardProps {
@@ -146,4 +145,3 @@ export const TaskErrorCard: React.FC<TaskErrorCardProps> = ({ task }) => {
 };
 
 export default TaskErrorCard;
-

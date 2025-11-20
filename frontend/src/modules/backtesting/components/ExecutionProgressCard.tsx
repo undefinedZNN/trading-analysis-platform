@@ -95,6 +95,8 @@ export const ExecutionProgressCard: React.FC<ExecutionProgressCardProps> = ({
     }
   };
 
+  const remainingTime = getEstimatedTimeRemaining();
+
   return (
     <Card
       title={
@@ -149,11 +151,11 @@ export const ExecutionProgressCard: React.FC<ExecutionProgressCardProps> = ({
             </Col>
           )}
 
-          {getEstimatedTimeRemaining() && (
+          {remainingTime && (
             <Col span={8}>
               <Statistic
                 title="预计剩余"
-                value={getEstimatedTimeRemaining()}
+                value={remainingTime}
                 valueStyle={{ fontSize: 16, color: '#8c8c8c' }}
               />
             </Col>

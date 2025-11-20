@@ -40,7 +40,7 @@ export class ParquetDuckDBProvider implements DataProvider {
   constructor(config: Partial<DataSourceConfig> = {}) {
     // 合并默认配置
     this.config = {
-      storageBasePath: config.storageBasePath || 'storage/datasets',
+      storageBasePath: config.storageBasePath || '../backend/storage/datasets',
       defaultBatchSize: config.defaultBatchSize || 10000,
       defaultOverlapSize: config.defaultOverlapSize || 0,
       defaultMaxConcurrent: config.defaultMaxConcurrent || 3,
@@ -51,6 +51,7 @@ export class ParquetDuckDBProvider implements DataProvider {
       connectionPoolSize: config.connectionPoolSize || 1,
     };
 
+    console.log(`ParquetDuckDBProvider config ==============================================: ${JSON.stringify(this.config)}`);
     this.queryBuilder = new DefaultDuckDBQueryBuilder(this.config.storageBasePath);
     this.gapDetector = new DefaultGapDetector();
     this.gapFiller = new DefaultGapFiller();

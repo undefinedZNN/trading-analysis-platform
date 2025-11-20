@@ -215,6 +215,11 @@ export class RSIMeanReversionStrategy {
 
     // 计算止损价格
     const stopLoss = price.times(1 - this.params.stopLossPercent);
+    const tradePlan = {
+      entryPrice: price.toFixed(6),
+      stopPrice: stopLoss.toFixed(6),
+      barTimestamp: bar.timestamp,
+    };
 
     this.context.log('info', 'RSI Oversold - Buy Signal', {
       rsi: rsi.toFixed(2),
@@ -228,6 +233,9 @@ export class RSIMeanReversionStrategy {
       side: 'buy',
       quantity: quantity.toFixed(8),
       reason: 'rsi_oversold',
+      metadata: {
+        tradePlan,
+      },
     });
 
     this.state.position = 'long';
@@ -248,6 +256,12 @@ export class RSIMeanReversionStrategy {
     const entryPrice = new Big(this.state.entryPrice);
     const pnl = price.minus(entryPrice).div(entryPrice).times(100);
     const holdingTime = bar.timestamp - (this.state.entryTime || 0);
+    const tradePlan = {
+      entryPrice: this.state.entryPrice ?? undefined,
+      exitPrice: price.toFixed(6),
+      stopPrice: this.state.stopLossPrice ?? undefined,
+      barTimestamp: bar.timestamp,
+    };
 
     this.context.log('info', 'RSI Overbought - Sell Signal', {
       rsi: rsi.toFixed(2),
@@ -262,6 +276,9 @@ export class RSIMeanReversionStrategy {
       side: 'sell',
       quantity: 'all',
       reason: reason,
+      metadata: {
+        tradePlan,
+      },
     });
 
     this.state.position = 'none';
@@ -298,4 +315,3 @@ export default {
   features,
   Strategy: RSIMeanReversionStrategy,
 };
-

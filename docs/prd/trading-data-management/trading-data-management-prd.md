@@ -71,6 +71,12 @@
 - 需要记录导入任务的开始/结束时间、进度、结果，以便后续监控。
 - 可在后续迭代中接入更完整的日志与告警机制（参见相关架构文档）。
 
+## 回测交易明细 & 摘要（新增）
+- Worker 在任务完成后会将每笔成交写入 `backend/storage/backtests/{taskId}/trades.parquet`，字段覆盖 `task_id/strategy_id/script_version_id/side/price/quantity/fees/position` 以及系统/自定义因子快照 `factor_snapshot.system|custom`。
+- 回测摘要 `resultSummary` 随任务保存，包含初始资金、最终权益、收益率、总交易数、胜率、总盈亏、总手续费、profit factor 等，并透出 artifacts 列表（如 `{ type: 'trades/parquet', path: 'backtests/{taskId}/trades.parquet' }`）。
+- 主服务暴露 `GET /api/v1/backtesting/tasks/:taskId/trades`，在任务详情页提供“下载交易明细”按钮，前端调用该接口即可获取 Parquet 文件（权限控制后续迭代再补）。
+- 如需分析交易明细，可直接使用 DuckDB/Polars 读取 parquet 文件，对 `factor_snapshot.system/custom` 做展开即可进行因子回测/统计。
+
 ## 开发里程碑建议
 1. **MVP**：实现列表查询、导入表单 + 进度、元数据编辑、软删除/恢复。
 2. **增强**：增加任务详情页、导入结果通知、批量操作。

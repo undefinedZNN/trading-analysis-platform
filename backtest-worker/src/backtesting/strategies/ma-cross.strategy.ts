@@ -169,6 +169,7 @@ export class MACrossStrategy {
     const equity = this.context.getEquity();
     const positionValue = new Big(equity).times(this.params.positionSize);
     const quantity = positionValue.div(price);
+    const entryPrice = price.toFixed(6);
 
     this.context.log('debug', 'Golden Cross - Buy Signal', {
       price: price.toFixed(2),
@@ -182,6 +183,12 @@ export class MACrossStrategy {
       side: 'buy',
       quantity: quantity.toFixed(8),
       reason: 'golden_cross',
+      metadata: {
+        tradePlan: {
+          entryPrice,
+          barTimestamp: bar.timestamp,
+        },
+      },
     });
 
     this.state.position = 'long';
@@ -198,6 +205,7 @@ export class MACrossStrategy {
 
     const entryPrice = new Big(this.state.entryPrice);
     const pnl = price.minus(entryPrice).div(entryPrice).times(100);
+    const exitPrice = price.toFixed(6);
 
     this.context.log('debug', 'Death Cross - Sell Signal', {
       entryPrice: this.state.entryPrice,
@@ -210,6 +218,13 @@ export class MACrossStrategy {
       side: 'sell',
       quantity: 'all', // 全部卖出
       reason: 'death_cross',
+      metadata: {
+        tradePlan: {
+          entryPrice: this.state.entryPrice,
+          exitPrice,
+          barTimestamp: bar.timestamp,
+        },
+      },
     });
 
     this.state.position = 'none';
@@ -243,4 +258,3 @@ export default {
   features,
   Strategy: MACrossStrategy,
 };
-

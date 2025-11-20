@@ -175,9 +175,13 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
   /**
    * 格式化百分比
    */
-  const formatPercent = (value?: number) => {
+  const formatPercent = (value?: number | string) => {
     if (value === undefined || value === null) return '-';
-    return `${(value * 100).toFixed(2)}%`;
+    const numeric = typeof value === 'number' ? value : Number(value);
+    if (Number.isNaN(numeric)) {
+      return '-';
+    }
+    return `${numeric.toFixed(2)}%`;
   };
 
   /**
@@ -399,9 +403,13 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
           </Tooltip>
         )}
 
-        {[BacktestTaskStatus.COMPLETED, BacktestTaskStatus.FAILED, BacktestTaskStatus.CANCELLED].includes(
-          task.status,
-        ) && (
+        {(
+          [
+            BacktestTaskStatus.COMPLETED,
+            BacktestTaskStatus.FAILED,
+            BacktestTaskStatus.CANCELLED,
+          ] as BacktestTaskStatus[]
+        ).includes(task.status) && (
           <Tooltip title="复制配置">
             <Button
               size="small"

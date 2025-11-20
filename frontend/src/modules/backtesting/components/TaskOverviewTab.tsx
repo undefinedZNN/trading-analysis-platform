@@ -1,15 +1,16 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Descriptions,
   Card,
   Space,
-  Alert,
   Tag,
   Typography,
   Statistic,
   Row,
   Col,
   Divider,
+  Button,
+  message,
 } from 'antd';
 import {
   ClockCircleOutlined,
@@ -17,12 +18,14 @@ import {
   CloseCircleOutlined,
   WarningOutlined,
   RocketOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import {
   type BacktestTask,
   BacktestTaskStatus,
+  downloadBacktestTrades,
 } from '../../../shared/api/backtestTasks';
 import { ExecutionProgressCard } from './ExecutionProgressCard';
 import { TaskErrorCard } from './TaskErrorCard';
@@ -40,6 +43,8 @@ interface TaskOverviewTabProps {
  * 显示任务的详细配置、执行状态、结果摘要等信息
  */
 export const TaskOverviewTab: React.FC<TaskOverviewTabProps> = ({ task }) => {
+  const [downloading, setDownloading] = useState(false);
+
   /**
    * 计算执行时长
    */
@@ -95,6 +100,55 @@ export const TaskOverviewTab: React.FC<TaskOverviewTabProps> = ({ task }) => {
     }
 
     const summary = task.resultSummary;
+    const artifacts = summary.artifacts ?? [];
+    const hasTradeArtifact =
+      !!artifacts.find((item) => item.type === 'trades/parquet') ||
+      !!task.resultFilePath;
+
+    const toPercent = (value?: number | null) => {
+      if (value === undefined || value === null) {
+        return undefined;
+      }
+      return value > 1 ? value : value * 100;
+    };
+
+    const totalReturn = toPercent(summary.totalReturn ?? summary.returnPct);
+    const annualizedReturn = toPercent(summary.annualizedReturn ?? summary.returnPct);
+    const winRate = toPercent(summary.winRate);
+    const initialCapital = summary.initialCapital ?? task.executionConfig.initialCapital;
+    const finalCapital = summary.finalCapital ?? summary.endingEquity ?? summary.finalCapital ?? initialCapital;
+    const totalPnl =
+      summary.totalPnl ??
+      (finalCapital !== undefined && initialCapital !== undefined
+        ? finalCapital - initialCapital
+        : undefined);
+    const totalTrades = summary.totalTrades ?? 0;
+    const totalFees = summary.totalFees;
+    const profitFactor = summary.profitFactor ?? summary.profitLossRatio;
+
+    const handleDownload = useCallback(async () => {
+      if (!hasTradeArtifact) {
+        message.warning('该任务暂无交易明细');
+        return;
+      }
+      try {
+        setDownloading(true);
+        const blob = await downloadBacktestTrades(task.taskId);
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${task.taskId}-trades.parquet`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        message.success('交易明细已开始下载');
+      } catch (error) {
+        message.error('下载交易明细失败');
+      } finally {
+        setDownloading(false);
+      }
+    }, [hasTradeArtifact, task.taskId]);
 
     return (
       <Card
@@ -104,28 +158,42 @@ export const TaskOverviewTab: React.FC<TaskOverviewTabProps> = ({ task }) => {
             <span>回测结果摘要</span>
           </Space>
         }
+        extra={
+          hasTradeArtifact ? (
+            <Button
+              type="primary"
+              icon={<DownloadOutlined />}
+              loading={downloading}
+              onClick={handleDownload}
+            >
+              下载交易明细
+            </Button>
+          ) : undefined
+        }
         style={{ marginBottom: 16 }}
       >
         <Row gutter={[16, 16]}>
           <Col span={6}>
             <Statistic
               title="总收益率"
-              value={summary.totalReturn}
+              value={totalReturn}
               precision={2}
               suffix="%"
               valueStyle={{
-                color: summary.totalReturn >= 0 ? '#3f8600' : '#cf1322',
+                color:
+                  (totalReturn ?? 0) >= 0 ? '#3f8600' : '#cf1322',
               }}
             />
           </Col>
           <Col span={6}>
             <Statistic
               title="年化收益率"
-              value={summary.annualizedReturn}
+              value={annualizedReturn}
               precision={2}
               suffix="%"
               valueStyle={{
-                color: summary.annualizedReturn >= 0 ? '#3f8600' : '#cf1322',
+                color:
+                  (annualizedReturn ?? 0) >= 0 ? '#3f8600' : '#cf1322',
               }}
             />
           </Col>
@@ -148,7 +216,7 @@ export const TaskOverviewTab: React.FC<TaskOverviewTabProps> = ({ task }) => {
           <Col span={6}>
             <Statistic
               title="胜率"
-              value={summary.winRate}
+              value={winRate}
               precision={2}
               suffix="%"
             />
@@ -156,21 +224,21 @@ export const TaskOverviewTab: React.FC<TaskOverviewTabProps> = ({ task }) => {
           <Col span={6}>
             <Statistic
               title="盈亏比"
-              value={summary.profitLossRatio}
+              value={summary.profitLossRatio ?? profitFactor}
               precision={2}
             />
           </Col>
           <Col span={6}>
             <Statistic
               title="交易次数"
-              value={summary.totalTrades}
+              value={totalTrades}
               suffix="次"
             />
           </Col>
           <Col span={6}>
             <Statistic
               title="最终资金"
-              value={summary.finalCapital}
+              value={finalCapital}
               precision={2}
               prefix="$"
             />
@@ -182,17 +250,18 @@ export const TaskOverviewTab: React.FC<TaskOverviewTabProps> = ({ task }) => {
         <Row gutter={16}>
           <Col span={12}>
             <Statistic
-              title="已处理Bar数"
-              value={summary.processedBars}
-              suffix="个"
+              title="总盈亏"
+              value={totalPnl}
+              precision={2}
+              prefix="$"
             />
           </Col>
           <Col span={12}>
             <Statistic
-              title="执行时长"
-              value={summary.executionTime}
+              title="总手续费"
+              value={totalFees}
               precision={2}
-              suffix="秒"
+              prefix="$"
             />
           </Col>
         </Row>
@@ -395,4 +464,3 @@ export const TaskOverviewTab: React.FC<TaskOverviewTabProps> = ({ task }) => {
 };
 
 export default TaskOverviewTab;
-

@@ -75,8 +75,6 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
     const data: { date: string; drawdown: number }[] = [];
 
     for (let i = 0; i <= Math.min(processedBars, 100); i++) {
-      const progress = i / Math.min(processedBars, 100);
-
       // 模拟回撤曲线（在最大回撤范围内波动）
       const baseDrawdown = Math.abs(Math.sin(i * 0.2) * maxDrawdown * 0.8);
       const randomFactor = Math.random() * maxDrawdown * 0.2;
@@ -206,9 +204,6 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
         lineWidth: 2,
       },
       color: '#ff4d4f',
-      areaStyle: {
-        fill: 'l(270) 0:#ff4d4f33 1:#ff4d4f00',
-      },
       point: {
         size: 0,
       },

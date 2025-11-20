@@ -56,17 +56,27 @@ export interface DataConfig {
 /**
  * 结果摘要接口
  */
+export interface ResultArtifact {
+  type: string;
+  path: string;
+  [key: string]: unknown;
+}
+
 export interface ResultSummary {
-  totalReturn: number;
-  annualizedReturn: number;
-  maxDrawdown: number;
-  sharpeRatio: number;
-  winRate: number;
-  profitLossRatio: number;
+  taskId: string;
+  strategyId: string;
+  scriptVersionId?: string | null;
+  initialCapital: number;
+  endingEquity: number;
+  returnPct: number;
   totalTrades: number;
-  finalCapital: number;
-  processedBars: number;
-  executionTime: number;
+  winningTrades: number;
+  winRate: number;
+  totalPnl: number;
+  totalFees: number;
+  profitFactor: number;
+  [key: string]: unknown;
+  artifacts?: ResultArtifact[];
 }
 
 /**

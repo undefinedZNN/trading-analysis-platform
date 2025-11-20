@@ -77,17 +77,26 @@ async function executeTask(taskId: string) {
     task.status = BacktestTaskStatus.COMPLETED;
     task.completedAt = new Date();
     task.progress = 100;
+    const initialCapital = (task.executionConfig as any)?.initialCapital ?? 10000;
+    const endingEquity = initialCapital * 1.15;
     task.resultSummary = {
+      taskId,
+      strategyId: task.strategyId,
+      scriptVersionId: task.scriptVersionId,
+      initialCapital,
+      endingEquity,
+      returnPct: endingEquity / initialCapital - 1,
+      totalTrades: 50,
+      winningTrades: Math.round(50 * 0.55),
+      winRate: 0.55,
+      totalPnl: endingEquity - initialCapital,
+      totalFees: 0,
+      profitFactor: 1.8,
       totalReturn: 0.15,
       annualizedReturn: 0.18,
       maxDrawdown: -0.08,
       sharpeRatio: 1.5,
-      winRate: 0.55,
-      profitLossRatio: 1.8,
-      totalTrades: 50,
-      finalCapital: 11500,
-      processedBars: 1000,
-      executionTime: 5,
+      artifacts: [],
     };
     await taskRepo.save(task);
     console.log('\n✅ 任务执行完成（模拟）');
@@ -124,4 +133,3 @@ async function main() {
 }
 
 main();
-
