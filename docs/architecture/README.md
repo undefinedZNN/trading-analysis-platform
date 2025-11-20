@@ -1,37 +1,102 @@
-# 架构文档
+# 架构设计文档
 
 本目录包含交易分析平台的架构设计文档。
 
-## 文档列表
+---
+
+## 📁 目录结构
+
+```
+architecture/
+├── README.md (本文档)
+├── 系统架构设计.md (整体系统架构)
+├── 技术栈选型.md (技术栈说明)
+├── data-import-pipeline.md (数据导入管道)
+├── data-import-product-requirements.md (数据导入需求)
+│
+├── backtrader-migration/ (Backtrader 迁移项目)
+│   ├── README.md (项目导航)
+│   ├── BACKTRADER_PROJECT_STATUS.md (当前状态)
+│   ├── backtrader-poc-plan.md (POC 计划)
+│   └── ... (其他 Backtrader 相关文档)
+│
+└── backtest-service-redesign/ (回测服务重构设计)
+    ├── README.md
+    ├── 01-architecture-overview.md
+    └── ...
+```
+
+---
+
+## 📖 文档导航
 
 ### 核心架构文档
 
-- **[技术栈选型.md](./技术栈选型.md)** - 详细的技术栈选型分析和决策依据
-- **[系统架构设计.md](./系统架构设计.md)** - 整体系统架构设计（含总体架构与导入时序图）
-- **数据库设计.md** - 数据库架构和表结构设计（待创建）
-- **API设计规范.md** - RESTful API 设计规范（待创建）
+1. **系统架构设计** → [`系统架构设计.md`](./系统架构设计.md)
+   - 整体系统架构
+   - 模块划分
+   - 技术选型
 
-### 专项设计文档
+2. **技术栈选型** → [`技术栈选型.md`](./技术栈选型.md)
+   - 前端技术栈
+   - 后端技术栈
+   - 数据库和存储
 
-- **安全架构设计.md** - 系统安全架构和策略（待创建）
-- **性能优化方案.md** - 性能优化策略和实施方案（待创建）
-- **部署架构设计.md** - 生产环境部署架构（待创建）
-- **监控体系设计.md** - 系统监控和告警设计（待创建）
-- **[交易数据导入与清洗设计](./data-import-pipeline.md)** - 包含最新的数据导入时序图与模块架构图，便于快速理解导入链路
+### 数据管理
 
-## 文档维护
+3. **数据导入管道** → [`data-import-pipeline.md`](./data-import-pipeline.md)
+4. **数据导入需求** → [`data-import-product-requirements.md`](./data-import-product-requirements.md)
 
-- 所有架构文档应保持最新状态
-- 重大架构变更需要更新相关文档
-- 文档变更需要经过团队评审
+### 专项设计
 
-## 相关资源
+5. **Backtrader 迁移项目** → [`backtrader-migration/`](./backtrader-migration/)
+   - 完整的 Backtrader 替换方案
+   - 当前正在进行的项目
+   - 📍 **重点关注**
 
-- [开发文档](../development/) - 开发环境和流程
-- [API文档](../api/) - API接口文档
-- [用户指南](../user-guide/) - 用户使用指南
-- [PRD文档](../prd/) - 产品需求文档
+6. **回测服务重构** → [`backtest-service-redesign/`](./backtest-service-redesign/)
+   - 回测服务架构重构
+   - 服务隔离设计
 
-## 注意事项
+---
 
-- 代码尽量添加清晰的注释，注释语言使用中文
+## 🎯 当前重点项目
+
+### Backtrader 迁移项目 (进行中)
+
+**状态**: 需求讨论完成，准备启动 POC  
+**时间线**: 1-2 周 POC + 3-4 个月开发
+
+**快速访问**:
+- [项目状态](./backtrader-migration/BACKTRADER_PROJECT_STATUS.md) ⭐
+- [文档索引](./backtrader-migration/BACKTRADER_RESEARCH_INDEX.md)
+- [POC 计划](./backtrader-migration/backtrader-poc-plan.md)
+
+---
+
+## 📝 文档维护
+
+### 添加新文档
+
+1. **通用架构文档** → 直接放在 `architecture/` 目录
+2. **专项设计** → 创建子目录，如 `architecture/项目名称/`
+3. **临时文档** → 完成后归档或删除
+
+### 文档命名规范
+
+- 中文文档: `系统架构设计.md`
+- 英文文档: `data-import-pipeline.md`
+- 项目文档: 放在项目子目录
+
+---
+
+## 🔗 相关文档
+
+- [PRD 文档](../prd/) - 产品需求文档
+- [QA 文档](../qa/) - 测试和质量保证
+- [开发者笔记](../developer-notes/) - 开发技巧和注意事项
+
+---
+
+**维护者**: [待填写]  
+**最后更新**: 2025-11-20
