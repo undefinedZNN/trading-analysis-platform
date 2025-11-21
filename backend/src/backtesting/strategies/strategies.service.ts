@@ -279,54 +279,91 @@ export class StrategiesService {
     scriptVersionId: string,
     dto: UpdateScriptVersionDto,
   ) {
-    const version = await this.scriptVersionRepository.findOne({
+    // 获取旧版本作为基础
+    const oldVersion = await this.scriptVersionRepository.findOne({
       where: { scriptVersionId, strategyId },
     });
-    if (!version) {
+    if (!oldVersion) {
       throw new NotFoundException('脚本版本不存在');
     }
 
-    const updatePayload: Partial<ScriptVersionEntity> = {};
+    // 🆕 需求变更：每次编辑都会自动产生一个新版本
+    // 不再 UPDATE 现有版本，而是 INSERT 新版本
 
-    if (dto.code !== undefined) {
-      await this.ensureScriptValid(dto.code);
-      const schemas = this.scriptParser.parse(dto.code);
-      const compiled = this.scriptCompiler.compile(dto.code);
-      updatePayload.code = dto.code;
-      updatePayload.parameterSchema = schemas.parameters;
-      updatePayload.factorSchema = schemas.factors;
-      updatePayload.compiledCode = compiled.compiledCode;
-      updatePayload.compiledAt = new Date();
-    }
+    // 如果没有修改代码，只修改 remark 或 versionName，仍然使用旧的 UPDATE 逻辑
+    if (dto.code === undefined) {
+      // 仅更新元数据（remark、versionName）
+      const updatePayload: Partial<ScriptVersionEntity> = {};
 
-    if (dto.versionName) {
-      const exists = await this.scriptVersionRepository.findOne({
-        where: {
-          strategyId,
-          versionName: dto.versionName,
-        },
-      });
-      if (exists && exists.scriptVersionId !== scriptVersionId) {
-        throw new ConflictException('版本号已存在，请更换');
+      if (dto.versionName) {
+        const exists = await this.scriptVersionRepository.findOne({
+          where: {
+            strategyId,
+            versionName: dto.versionName,
+          },
+        });
+        if (exists && exists.scriptVersionId !== scriptVersionId) {
+          throw new ConflictException('版本号已存在，请更换');
+        }
+        updatePayload.versionName = dto.versionName;
       }
-      updatePayload.versionName = dto.versionName;
+
+      if (dto.remark !== undefined) {
+        updatePayload.remark = dto.remark;
+      }
+
+      if (dto.updatedBy !== undefined) {
+        updatePayload.updatedBy = dto.updatedBy;
+      }
+
+      await this.scriptVersionRepository.update(
+        scriptVersionId,
+        updatePayload,
+      );
+
+      if (dto.setMaster) {
+        await this.setMasterVersion(strategyId, scriptVersionId);
+      }
+
+      return this.getStrategy(strategyId);
     }
 
-    if (dto.remark !== undefined) {
-      updatePayload.remark = dto.remark;
+    // 🆕 代码有修改，创建新版本
+    // 强制要求填写 remark（版本说明）
+    if (!dto.remark || dto.remark.trim() === '') {
+      throw new BadRequestException('修改代码时必须填写版本说明（remark）');
     }
 
-    if (dto.updatedBy !== undefined) {
-      updatePayload.updatedBy = dto.updatedBy;
+    // 获取现有版本列表，生成新版本名
+    const existingVersions = await this.scriptVersionRepository.find({
+      where: { strategyId },
+      select: { versionName: true },
+    });
+
+    const newVersionName = dto.versionName?.trim() 
+      || generateVersionName(existingVersions.map(v => v.versionName));
+
+    // 检查版本名是否冲突
+    if (existingVersions.some(v => v.versionName === newVersionName)) {
+      throw new ConflictException('版本号已存在，请更换');
     }
 
-    await this.scriptVersionRepository.update(
-      scriptVersionId,
-      updatePayload,
+    // 基于旧版本创建新版本
+    const newVersion = await this.createVersionInternal(
+      strategyId,
+      {
+        code: dto.code,
+        remark: dto.remark,
+        versionName: newVersionName,
+        createdBy: dto.updatedBy || oldVersion.updatedBy,
+        updatedBy: dto.updatedBy || oldVersion.updatedBy,
+      },
+      false, // 不自动设为 master
     );
 
+    // 如果需要设为 master
     if (dto.setMaster) {
-      await this.setMasterVersion(strategyId, scriptVersionId);
+      await this.setMasterVersion(strategyId, newVersion.scriptVersionId);
     }
 
     return this.getStrategy(strategyId);

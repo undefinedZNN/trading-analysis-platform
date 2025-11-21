@@ -721,94 +721,119 @@ async rollbackWithGit(strategyId: string, versionId: string) {
 
 ---
 
-## ❓ 待确认的问题
+## ✅ 已确认的决策（2025-11-21）
 
-### 1. 版本说明（description）是否必填？
+### 关键需求说明
 
-**问题**：用户创建新版本时，是否必须填写版本说明？
+**现有实现基础**：
+- ✅ `script_versions` 表已存在
+- ✅ `is_master` 字段标记主版本
+- ✅ `version_name` 支持自动生成（generateVersionName）
+- ✅ `remark` 字段作为版本说明
+- ✅ 版本对比功能（diffScriptVersions）
+- ✅ 复制版本功能（copyScriptVersion）
 
-**选项**：
-- **A. 选填**：方便快速保存
-- **B. 必填**：强制用户记录修改原因 ⭐
-
-**你的选择**：[ ]
+**核心需求**：
+1. 一个策略拥有多个版本的脚本同时存在
+2. 其中有一个可以设置为 master 版本（`is_master = true`）
+3. **每次编辑都会自动产生一个新版本**（重要变更）
+4. 前端实现自动保存草稿，不需要服务端提供缓存
 
 ---
 
-### 2. 版本回滚方式
+### 1. 版本编辑行为 ✅
 
-**问题**：回滚到旧版本时，如何处理？
+**决策**：**B（每次编辑创建新版本）**
 
-**选项**：
-- **A. 直接激活旧版本**（简单）
-  - 优点：简单直接
-  - 缺点：丢失"回滚"这个操作记录
+**实现影响**：
+- 现有的 `updateScriptVersion` 需要修改行为
+- 从 UPDATE 操作变为 INSERT 新版本
+- 保留所有历史版本，永不覆盖
+
+**实现示例**：
+```typescript
+async updateScriptVersion(strategyId, scriptVersionId, dto) {
+  const oldVersion = await this.scriptVersionRepository.findOne({
+    where: { scriptVersionId, strategyId }
+  });
   
-- **B. 基于旧版本创建新版本** ⭐（推荐）
-  - 优点：保留完整历史，包括回滚操作
-  - 缺点：版本号会增加
-
-**你的选择**：[ ]
-
----
-
-### 3. 版本自动保存
-
-**问题**：是否需要自动保存草稿版本？
-
-**选项**：
-- **A. 不需要**：用户手动保存
-- **B. 需要**：每隔 N 分钟或用户离开时自动保存草稿
-
-**如果需要，如何区分正式版本和草稿？**
-- 添加 `is_draft` 字段
-- 草稿版本不计入 `version_number`
-
-**你的选择**：[ ]
-
----
-
-### 4. 版本删除
-
-**问题**：是否允许删除历史版本？
-
-**选项**：
-- **A. 不允许删除**：保留完整历史 ⭐
-  - 只能标记为 deprecated（废弃）
+  // 不再更新现有版本，而是创建新版本
+  const newVersion = await this.createVersionInternal(strategyId, {
+    code: dto.code ?? oldVersion.code,
+    remark: dto.remark, // 必填
+    versionName: generateVersionName(existingVersions),
+    createdBy: dto.updatedBy
+  }, false);
   
-- **B. 允许删除**：用户可以删除旧版本
-  - 但不能删除有关联回测结果的版本
-
-**你的选择**：[ ]
-
----
-
-### 5. 版本标签（Tag）
-
-**问题**：是否需要在 MVP 阶段就实现版本标签？
-
-**选项**：
-- **A. 不需要**：MVP 阶段先不做 ⭐
-  - 简化实现
-  
-- **B. 需要**：直接实现标签功能
-  - 方便用户标记重要版本
-
-**你的选择**：[ ]
+  return newVersion;
+}
+```
 
 ---
 
-### 6. 版本命名
+### 2. 版本说明（remark）是否必填？✅
 
-**问题**：版本号如何生成？
+**决策**：**B（必填）**
 
-**当前方案**：自动递增（v1, v2, v3...）
+每次创建新版本时，必须填写 `remark` 字段，记录修改原因。
 
-**是否需要支持自定义版本号？**
-- **A. 不需要**：自动递增 ⭐
-- **B. 需要**：用户可以自定义（如 v1.0.1）
+---
 
-**你的选择**：[ ]
+### 3. 版本回滚方式 ✅
+
+**决策**：**A（切换 master）**
+
+**说明**：
+- 直接将旧版本设置为 `is_master = true`
+- 使用现有的 `setMasterVersion` 方法
+- 不创建新版本，保持版本号连续性
+
+**实现**：
+```typescript
+// 回滚到 v2
+await setMasterVersion(strategyId, v2ScriptVersionId);
+// 结果：v2.is_master = true, v3.is_master = false
+```
+
+---
+
+### 4. 版本自动保存 ✅
+
+**决策**：**前端实现，服务端不需要**
+
+**说明**：
+- 前端编辑器实现自动保存草稿（localStorage 或 IndexedDB）
+- 服务端不提供草稿缓存功能
+- 用户主动保存时才调用 `createScriptVersion` 或 `updateScriptVersion`
+
+---
+
+### 5. 版本删除 ✅
+
+**决策**：**A（不允许删除）**
+
+**说明**：
+- 保留完整的版本历史
+- 不提供删除版本的 API
+- 如需废弃，可以通过其他方式标记（如在 remark 中注明）
+
+---
+
+### 5. 版本标签（Tag）✅
+
+**现有实现已覆盖**：
+- `strategies.tags` 字段已支持标签功能
+- 使用 JSONB 数组存储
+- 前端可以根据标签过滤策略
+
+---
+
+### 6. 版本命名 ✅
+
+**现有实现已覆盖**：
+- `version_name` 字段支持自动生成
+- `generateVersionName()` 工具函数自动递增
+- 也支持用户自定义版本名称
 
 ---
 
@@ -820,5 +845,5 @@ async rollbackWithGit(strategyId: string, versionId: string) {
 
 ---
 
-**下一步**：确认上述问题后，我会创建详细的版本管理实现代码和前端组件。
+**状态**：✅ 所有问题已确认，需要修改 `updateScriptVersion` 实现
 
