@@ -1,26 +1,26 @@
+# -*- coding: utf-8 -*-
 """
 统计分析模块测试
 
-测试回测分析器和统计指标计算。
+测试指标计算和回测分析功能。
 """
 
 import sys
 import os
 import time
 import logging
+import numpy as np
+import pandas as pd
 from datetime import datetime, timedelta
 
 # 添加模块路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-import numpy as np
-from backtrader_integration.analytics import (
-    BacktestAnalyzer,
-    calculate_sharpe_ratio,
-    calculate_max_drawdown,
-    calculate_win_rate,
-    calculate_profit_factor,
-)
+import backtrader as bt
+from backtrader_integration.analytics import MetricsCalculator, BacktestAnalyzer
+from backtrader_integration.strategy import MACrossStrategy
+from backtrader_integration.data import CachedParquetDataFeed
+from backtrader_integration.factors import FactorCollector
 
 # 配置日志
 logging.basicConfig(
@@ -30,185 +30,197 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def test_metrics_functions():
-    """测试指标计算函数"""
+def test_metrics_calculator():
+    """测试指标计算器"""
     print("\n" + "="*80)
-    print("测试 1: 指标计算函数")
+    print("测试 1: 指标计算器")
     print("="*80)
     
-    # 测试夏普比率
-    returns = np.array([0.01, -0.005, 0.015, -0.01, 0.02])
-    sharpe = calculate_sharpe_ratio(returns)
-    print(f"✅ 夏普比率计算: {sharpe:.2f}")
-    assert isinstance(sharpe, (float, np.floating)), "应该返回浮点数"
+    calc = MetricsCalculator()
     
-    # 测试最大回撤
-    equity = np.array([100, 110, 105, 115, 100, 120])
-    max_dd, max_dd_pct, start_idx, end_idx = calculate_max_drawdown(equity)
-    print(f"✅ 最大回撤计算: {max_dd:.2f} ({max_dd_pct:.2%})")
-    assert max_dd_pct > 0, "应该有回撤"
+    # 1. 测试夏普比率
+    returns = np.array([0.01, 0.02, -0.01, 0.03, -0.02, 0.01])
+    sharpe = calc.sharpe_ratio(returns)
+    print(f"✅ 夏普比率: {sharpe:.3f}")
+    assert isinstance(sharpe, float), "夏普比率应该是浮点数"
     
-    # 测试胜率
-    trades = [100, -50, 150, -30, 200, -80]
-    win_rate = calculate_win_rate(trades)
-    print(f"✅ 胜率计算: {win_rate:.2%}")
+    # 2. 测试索提诺比率
+    sortino = calc.sortino_ratio(returns)
+    print(f"✅ 索提诺比率: {sortino:.3f}")
+    assert isinstance(sortino, float), "索提诺比率应该是浮点数"
+    
+    # 3. 测试最大回撤
+    equity_curve = np.array([100, 105, 103, 110, 95, 98, 112])
+    max_dd, start, valley, end = calc.max_drawdown(equity_curve)
+    print(f"✅ 最大回撤: {max_dd*100:.2f}% (索引: {start}->{valley}->{end})")
+    assert max_dd > 0, "最大回撤应该大于0"
+    assert start <= valley <= end, "回撤索引顺序应该正确"
+    
+    # 4. 测试胜率
+    trades = [100, -50, 80, -30, 120, -40, 90]
+    win_rate = calc.win_rate(trades)
+    print(f"✅ 胜率: {win_rate*100:.2f}%")
     assert 0 <= win_rate <= 1, "胜率应该在0-1之间"
     
-    # 测试盈亏比
-    profit_factor = calculate_profit_factor(trades)
-    print(f"✅ 盈亏比计算: {profit_factor:.2f}")
+    # 5. 测试盈亏比
+    profit_factor = calc.profit_factor(trades)
+    print(f"✅ 盈亏比: {profit_factor:.2f}")
     assert profit_factor > 0, "盈亏比应该大于0"
     
-    print("✅ 指标计算函数测试通过\n")
+    # 6. 测试平均盈亏比
+    avg_ratio = calc.average_win_loss_ratio(trades)
+    print(f"✅ 平均盈亏比: {avg_ratio:.2f}")
+    
+    # 7. 测试连续盈亏
+    max_wins = calc.max_consecutive_wins(trades)
+    max_losses = calc.max_consecutive_losses(trades)
+    print(f"✅ 最大连胜: {max_wins}, 最大连亏: {max_losses}")
+    
+    # 8. 测试期望值
+    expectancy = calc.expectancy(trades)
+    print(f"✅ 期望值: {expectancy:.2f}")
+    
+    # 9. 测试年化收益率
+    start_date = datetime(2023, 1, 1)
+    end_date = datetime(2023, 12, 31)
+    ann_return = calc.annualized_return(0.15, start_date, end_date)
+    print(f"✅ 年化收益率: {ann_return*100:.2f}%")
+    
+    # 10. 测试年化波动率
+    ann_vol = calc.annualized_volatility(returns)
+    print(f"✅ 年化波动率: {ann_vol*100:.2f}%")
+    
+    print("✅ 指标计算器测试通过\n")
 
 
-def test_backtest_analyzer_basic():
-    """测试回测分析器基础功能"""
+def test_backtest_analyzer_simple():
+    """测试回测分析器（简单场景）"""
     print("\n" + "="*80)
-    print("测试 2: 回测分析器基础功能")
+    print("测试 2: 回测分析器（简单场景）")
     print("="*80)
     
-    # 创建分析器
-    analyzer = BacktestAnalyzer()
-    analyzer.set_initial_cash(100000.0)
-    print("✅ 分析器创建成功")
+    # 创建简单的回测
+    cerebro = bt.Cerebro()
+    cerebro.broker.setcash(100000.0)
+    cerebro.broker.setcommission(commission=0.001)
     
-    # 添加一些模拟交易
-    base_date = datetime(2023, 1, 1)
-    
-    trades = [
-        {'entry_date': base_date, 'exit_date': base_date + timedelta(hours=1), 'pnl': 100, 'pnl_percent': 0.01, 'holding_bars': 60},
-        {'entry_date': base_date + timedelta(hours=2), 'exit_date': base_date + timedelta(hours=3), 'pnl': -50, 'pnl_percent': -0.005, 'holding_bars': 60},
-        {'entry_date': base_date + timedelta(hours=4), 'exit_date': base_date + timedelta(hours=5), 'pnl': 150, 'pnl_percent': 0.015, 'holding_bars': 60},
-        {'entry_date': base_date + timedelta(hours=6), 'exit_date': base_date + timedelta(hours=7), 'pnl': -30, 'pnl_percent': -0.003, 'holding_bars': 60},
-        {'entry_date': base_date + timedelta(hours=8), 'exit_date': base_date + timedelta(hours=9), 'pnl': 200, 'pnl_percent': 0.02, 'holding_bars': 60},
-    ]
-    
-    for trade in trades:
-        analyzer.add_trade(trade)
-    print(f"✅ 添加 {len(trades)} 笔交易")
-    
-    # 添加权益曲线点
-    equity_values = [100000, 100100, 100050, 100200, 100170, 100370]
-    for i, value in enumerate(equity_values):
-        analyzer.add_equity_point(
-            date=base_date + timedelta(hours=i),
-            value=value,
-            cash=value * 0.5
-        )
-    print(f"✅ 添加 {len(equity_values)} 个权益点")
-    
-    analyzer.set_final_value(100370.0)
-    
-    # 执行分析
-    results = analyzer.analyze()
-    print("✅ 分析完成")
-    
-    # 验证结果结构
-    assert 'summary' in results, "应该包含摘要"
-    assert 'returns' in results, "应该包含收益指标"
-    assert 'risk' in results, "应该包含风险指标"
-    assert 'trades' in results, "应该包含交易指标"
-    print("✅ 结果结构正确")
-    
-    # 验证基本指标
-    assert results['summary']['total_trades'] == 5, "交易数量应该是5"
-    assert results['returns']['total_return'] > 0, "总收益应该大于0"
-    assert 0 <= results['trades']['win_rate'] <= 1, "胜率应该在0-1之间"
-    print("✅ 基本指标正确")
-    
-    # 打印摘要
-    print("\n结果摘要:")
-    print(f"  总收益率: {results['returns']['total_return']:.2%}")
-    print(f"  夏普比率: {results['risk']['sharpe_ratio']:.2f}")
-    print(f"  最大回撤: {results['risk']['max_drawdown_percent']:.2%}")
-    print(f"  胜率: {results['trades']['win_rate']:.2%}")
-    print(f"  盈亏比: {results['trades']['profit_factor']:.2f}")
-    
-    print("✅ 回测分析器基础功能测试通过\n")
-
-
-def test_backtest_analyzer_export():
-    """测试回测分析器导出功能"""
-    print("\n" + "="*80)
-    print("测试 3: 回测分析器导出功能")
-    print("="*80)
-    
-    analyzer = BacktestAnalyzer()
-    analyzer.set_initial_cash(100000.0)
-    analyzer.set_final_value(105000.0)
-    
-    # 添加一些数据
-    base_date = datetime(2023, 1, 1)
-    analyzer.add_trade({
-        'entry_date': base_date,
-        'exit_date': base_date + timedelta(hours=1),
-        'pnl': 1000,
-        'pnl_percent': 0.01,
-        'holding_bars': 60
+    # 添加简单数据
+    df = pd.DataFrame({
+        'datetime': pd.date_range('2023-01-01', periods=100, freq='1min'),
+        'open': np.random.uniform(99, 101, 100),
+        'high': np.random.uniform(100, 102, 100),
+        'low': np.random.uniform(98, 100, 100),
+        'close': np.random.uniform(99, 101, 100),
+        'volume': np.random.randint(1000, 2000, 100),
     })
+    df = df.set_index('datetime')
     
-    analyzer.add_equity_point(base_date, 100000, 50000)
-    analyzer.add_equity_point(base_date + timedelta(hours=1), 101000, 51000)
+    data = bt.feeds.PandasData(dataname=df)
+    cerebro.adddata(data)
     
-    # 测试转换为字典
-    data_dict = analyzer.to_dict()
-    assert 'trades' in data_dict, "应该包含交易数据"
-    assert 'equity_curve' in data_dict, "应该包含权益曲线"
-    assert 'analysis' in data_dict, "应该包含分析结果"
-    print("✅ 转换为字典成功")
+    # 添加策略
+    cerebro.addstrategy(
+        MACrossStrategy,
+        sma_fast_period=5,
+        sma_slow_period=10,
+        task_id='test_analyzer'
+    )
     
-    # 测试转换为 DataFrame
-    trades_df = analyzer.to_dataframe()
-    assert len(trades_df) == 1, "应该有1笔交易"
-    print(f"✅ 转换为 DataFrame 成功: {len(trades_df)} 行")
+    print("✅ Cerebro 和策略创建成功")
     
-    # 测试权益曲线 DataFrame
-    equity_df = analyzer.get_equity_curve_df()
-    assert len(equity_df) == 2, "应该有2个权益点"
-    print(f"✅ 权益曲线 DataFrame: {len(equity_df)} 行")
+    # 运行回测
+    results = cerebro.run()
+    strategy = results[0]
     
-    print("✅ 回测分析器导出功能测试通过\n")
+    # 使用分析器
+    analyzer = BacktestAnalyzer()
+    analysis_results = analyzer.analyze(cerebro, strategy, initial_cash=100000.0)
+    
+    print(f"✅ 分析完成")
+    print(f"  总收益率: {analysis_results['total_return_pct']:.2f}%")
+    print(f"  夏普比率: {analysis_results['sharpe_ratio']:.3f}")
+    print(f"  最大回撤: {analysis_results['max_drawdown_pct']:.2f}%")
+    print(f"  总交易次数: {analysis_results['total_trades']}")
+    
+    # 验证结果
+    assert 'final_value' in analysis_results, "应该包含最终资金"
+    assert 'sharpe_ratio' in analysis_results, "应该包含夏普比率"
+    assert 'max_drawdown' in analysis_results, "应该包含最大回撤"
+    
+    # 格式化输出
+    formatted = analyzer.format_results(analysis_results)
+    print("\n格式化报告预览（前10行）:")
+    print("\n".join(formatted.split('\n')[:10]))
+    
+    print("✅ 回测分析器测试通过\n")
 
 
-def test_print_summary():
-    """测试打印摘要功能"""
+def test_backtest_analyzer_with_real_data():
+    """测试回测分析器（真实数据）"""
     print("\n" + "="*80)
-    print("测试 4: 打印摘要功能")
+    print("测试 3: 回测分析器（真实数据）")
     print("="*80)
     
-    analyzer = BacktestAnalyzer()
-    analyzer.set_initial_cash(100000.0)
-    analyzer.set_final_value(110000.0)
+    # 配置数据路径
+    data_base_path = '/Volumes/work/zen/trading-analysis-platform/backend/storage/datasets'
     
-    # 添加模拟数据
-    base_date = datetime(2023, 1, 1)
+    if not os.path.exists(data_base_path):
+        print("⚠️ 测试数据不存在，跳过真实数据测试")
+        return
     
-    # 添加10笔交易
-    for i in range(10):
-        pnl = (i % 2) * 500 - 200  # 交替盈亏
-        analyzer.add_trade({
-            'entry_date': base_date + timedelta(hours=i*2),
-            'exit_date': base_date + timedelta(hours=i*2+1),
-            'pnl': pnl,
-            'pnl_percent': pnl / 10000,
-            'holding_bars': 60
-        })
-    
-    # 添加权益曲线
-    for i in range(11):
-        value = 100000 + i * 1000
-        analyzer.add_equity_point(
-            date=base_date + timedelta(hours=i*2),
-            value=value,
-            cash=value * 0.5
+    try:
+        # 创建 Cerebro
+        cerebro = bt.Cerebro()
+        cerebro.broker.setcash(100000.0)
+        cerebro.broker.setcommission(commission=0.001)
+        
+        # 添加数据
+        data = CachedParquetDataFeed(
+            symbol='MES',
+            base_path=data_base_path,
+            start_date='2022-12-15 00:00:00',
+            end_date='2022-12-15 23:59:59',
+            aggregate_timeframe='1min',
         )
-    
-    # 打印摘要
-    print("\n测试打印摘要:")
-    analyzer.print_summary()
-    
-    print("✅ 打印摘要功能测试通过\n")
+        cerebro.adddata(data)
+        print("✅ 数据添加成功")
+        
+        # 添加策略和因子收集器
+        cerebro.addstrategy(
+            MACrossStrategy,
+            sma_fast_period=10,
+            sma_slow_period=30,
+            task_id='test_real_analyzer'
+        )
+        cerebro.addobserver(FactorCollector)
+        
+        # 运行回测
+        print("\n开始回测...")
+        start_time = time.time()
+        results = cerebro.run()
+        elapsed = time.time() - start_time
+        
+        strategy = results[0]
+        
+        # 分析结果
+        analyzer = BacktestAnalyzer()
+        analysis_results = analyzer.analyze(cerebro, strategy, initial_cash=100000.0)
+        
+        print(f"\n✅ 回测完成，耗时: {elapsed:.2f}秒")
+        
+        # 打印完整报告
+        print("\n" + analyzer.format_results(analysis_results))
+        
+        # 验证关键指标
+        assert analysis_results['total_return_pct'] != 0, "应该有收益率（可能为负）"
+        assert analysis_results['max_drawdown_pct'] >= 0, "最大回撤应该>=0"
+        
+        print("✅ 真实数据回测分析测试通过\n")
+        
+    except Exception as e:
+        print(f"❌ 真实数据测试失败: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def main():
@@ -220,10 +232,9 @@ def main():
     start_time = time.time()
     
     # 运行测试
-    test_metrics_functions()
-    test_backtest_analyzer_basic()
-    test_backtest_analyzer_export()
-    test_print_summary()
+    test_metrics_calculator()
+    test_backtest_analyzer_simple()
+    test_backtest_analyzer_with_real_data()
     
     # 统计
     end_time = time.time()
@@ -236,4 +247,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
