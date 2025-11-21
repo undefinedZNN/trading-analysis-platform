@@ -116,7 +116,7 @@
 创建了详细的设计文档，每个都包含多个方案对比：
 
 - 📊 **可视化系统设计** (5 个待决策问题)
-  - 方案对比：Backtrader 内置 vs 纯前端 ECharts vs 混合
+  - 方案对比：Backtrader 内置 vs 纯前端 AntV (G2) vs 混合
   - K 线图需求分析
   - 报告导出设计（HTML/PDF/Excel）
   - 数据导出格式设计

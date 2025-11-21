@@ -312,7 +312,7 @@ Frontend 显示结果
 - React + TypeScript
 - Monaco Editor (Python 语法)
 - Ant Design
-- ECharts (可视化)
+- AntV (G2 可视化)
 
 ### Backend (NestJS)
 - TypeScript

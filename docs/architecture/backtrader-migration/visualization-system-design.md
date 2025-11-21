@@ -130,7 +130,7 @@ cerebro.plot(
 
 ---
 
-### 方案 B：纯前端可视化（ECharts） ⭐ 推荐
+### 方案 B：纯前端可视化（AntV G2） ⭐ 推荐
 
 **数据导出**：
 ```python
@@ -227,7 +227,7 @@ function BacktestResultPage() {
 - K 线图 + 指标叠加（快速生成）
 - 作为快速预览
 
-**前端 ECharts 用于**：
+**前端 AntV (G2) 用于**：
 - 绩效曲线（可交互）
 - 交易统计（表格、卡片）
 - 因子分析（高级筛选）
@@ -257,9 +257,9 @@ function BacktestResultPage() {
 }
 ```
 
-**ECharts 配置**：
+**AntV G2 配置**：
 ```typescript
-const equityChartOption = {
+const equityChartConfig = {
   title: { text: '账户权益曲线' },
   tooltip: { trigger: 'axis' },
   xAxis: {
@@ -301,9 +301,9 @@ const equityChartOption = {
 }
 ```
 
-**ECharts 配置**：
+**AntV G2 配置**：
 ```typescript
-const drawdownChartOption = {
+const drawdownChartConfig = {
   title: { text: '回撤曲线' },
   tooltip: { trigger: 'axis', formatter: '{b}: {c}%' },
   xAxis: { type: 'time' },
@@ -344,9 +344,9 @@ const drawdownChartOption = {
 }
 ```
 
-**ECharts 配置**：
+**AntV G2 配置**：
 ```typescript
-const klineChartOption = {
+const klineChartConfig = {
   title: { text: 'K线图 + 交易点位' },
   tooltip: { trigger: 'axis' },
   xAxis: { type: 'category', data: ohlcv.map(d => d[0]) },
@@ -523,7 +523,7 @@ cerebro.plot(style='candlestick')
 
 ---
 
-### 正式开发：方案 B（纯前端 ECharts） ⭐
+### 正式开发：方案 B（纯前端 AntV G2） ⭐
 
 **理由**：
 - ✅ 最佳用户体验

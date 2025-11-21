@@ -160,7 +160,7 @@ Python Backtrader Worker
 
 ### 技术栈
 
-**Frontend**: React + TypeScript + Monaco Editor + Ant Design + ECharts
+**Frontend**: React + TypeScript + Monaco Editor + Ant Design + AntV (G2)
 
 **Backend**: NestJS (TypeScript) + PostgreSQL + RabbitMQ Client + DuckDB
 
