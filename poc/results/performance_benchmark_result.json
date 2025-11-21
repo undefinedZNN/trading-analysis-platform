@@ -1,0 +1,69 @@
+{
+  "test_suite": "Performance Benchmark",
+  "timestamp": "2025-11-21T23:56:54.812523",
+  "cache_stats": {
+    "hit_rate": 50.0,
+    "hits": 1,
+    "misses": 1,
+    "evictions": 0,
+    "current_size_mb": 0.0051727294921875,
+    "capacity_mb": 2048,
+    "item_count": 1
+  },
+  "tests": [
+    {
+      "test_name": "小数据集 (1天)",
+      "status": "success",
+      "parameters": {
+        "symbol": "ES",
+        "start_date": "2022-12-15 00:06:15",
+        "end_date": "2022-12-15 23:59:59",
+        "aggregate_timeframe": "1min"
+      },
+      "results": {
+        "bar_count": 93,
+        "trade_count": 2,
+        "final_value": 99955.46250000002
+      },
+      "performance": {
+        "data_load_time": 0.0629129409790039,
+        "backtest_time": 0.0073621273040771484,
+        "total_time": 0.07027697563171387,
+        "bars_per_second": 12632.21840085495
+      },
+      "timestamp": "2025-11-21T23:56:54.791743"
+    },
+    {
+      "test_name": "小数据集 (1天, 缓存命中)",
+      "status": "success",
+      "parameters": {
+        "symbol": "ES",
+        "start_date": "2022-12-15 00:06:15",
+        "end_date": "2022-12-15 23:59:59",
+        "aggregate_timeframe": "1min"
+      },
+      "results": {
+        "bar_count": 93,
+        "trade_count": 2,
+        "final_value": 99955.46250000002
+      },
+      "performance": {
+        "data_load_time": 9.894371032714844e-05,
+        "backtest_time": 0.006757020950317383,
+        "total_time": 0.0068569183349609375,
+        "bars_per_second": 13763.461839737483
+      },
+      "timestamp": "2025-11-21T23:56:54.798669"
+    },
+    {
+      "test_name": "中数据集 (1周)",
+      "status": "failed",
+      "error": "IO Error: No files found that match the pattern \"/Volumes/work/zen/trading-analysis-platform/backend/storage/datasets/ES/ES/1s/dt=2022-12-16/**/*.parquet\"\n\nLINE 2:             SELECT * FROM read_parquet(['/Volumes/work/zen/trading-analysis-platform...\n                                  ^"
+    },
+    {
+      "test_name": "大数据集 (1个月)",
+      "status": "failed",
+      "error": "IO Error: No files found that match the pattern \"/Volumes/work/zen/trading-analysis-platform/backend/storage/datasets/ES/ES/1s/dt=2022-12-16/**/*.parquet\"\n\nLINE 2:             SELECT * FROM read_parquet(['/Volumes/work/zen/trading-analysis-platform...\n                                  ^"
+    }
+  ]
+}

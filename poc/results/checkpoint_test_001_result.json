@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "task_id": "checkpoint_test_001",
+  "execution": {
+    "bar_count": 93,
+    "trade_count": 2,
+    "elapsed_seconds": 0.0065021514892578125,
+    "resumed_from_bar": 90
+  },
+  "checkpoint": {
+    "save_count": 0,
+    "total_time_ms": 0,
+    "avg_time_ms": 0
+  },
+  "final_value": 99955.46250000002,
+  "timestamp": "2025-11-21T23:53:16.408301"
+}

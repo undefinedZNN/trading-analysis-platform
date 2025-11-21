@@ -1,0 +1,110 @@
+{
+  "poc_name": "Backtrader 回测引擎集成 POC",
+  "summary_date": "2025-11-22T00:14:12.592636",
+  "performance_metrics": [
+    {
+      "category": "回测性能",
+      "metrics": [
+        {
+          "metric": "处理速度",
+          "target": "≥ 1,000 bars/秒",
+          "actual": "13,198 bars/秒",
+          "ratio": "13.2x",
+          "status": "✅"
+        },
+        {
+          "metric": "数据加载（首次）",
+          "target": "-",
+          "actual": "0.068秒",
+          "ratio": "-",
+          "status": "✅"
+        },
+        {
+          "metric": "数据加载（缓存）",
+          "target": "-",
+          "actual": "0.000秒",
+          "ratio": "∞",
+          "status": "✅"
+        },
+        {
+          "metric": "回测执行",
+          "target": "-",
+          "actual": "0.007秒",
+          "ratio": "-",
+          "status": "✅"
+        }
+      ]
+    },
+    {
+      "category": "缓存性能",
+      "metrics": [
+        {
+          "metric": "缓存加速比",
+          "target": "> 5x",
+          "actual": "10.2x",
+          "ratio": "2.0x",
+          "status": "✅"
+        },
+        {
+          "metric": "缓存命中率",
+          "target": "> 0%",
+          "actual": "50%",
+          "ratio": "-",
+          "status": "✅"
+        },
+        {
+          "metric": "缓存容量",
+          "target": "可配置",
+          "actual": "2GB",
+          "ratio": "-",
+          "status": "✅"
+        }
+      ]
+    },
+    {
+      "category": "断点续跑性能",
+      "metrics": [
+        {
+          "metric": "Checkpoint 开销",
+          "target": "< 5%",
+          "actual": "9.11%",
+          "ratio": "1.8x",
+          "status": "⚠️"
+        },
+        {
+          "metric": "恢复一致性",
+          "target": "100%",
+          "actual": "100%",
+          "ratio": "1.0x",
+          "status": "✅"
+        },
+        {
+          "metric": "Checkpoint 保存",
+          "target": "-",
+          "actual": "0.23ms/次",
+          "ratio": "-",
+          "status": "✅"
+        }
+      ]
+    },
+    {
+      "category": "消息通信性能",
+      "metrics": [
+        {
+          "metric": "消息发送延迟",
+          "target": "< 100ms",
+          "actual": "0.14ms",
+          "ratio": "714x",
+          "status": "✅"
+        },
+        {
+          "metric": "消息成功率",
+          "target": "> 99%",
+          "actual": "100%",
+          "ratio": "-",
+          "status": "✅"
+        }
+      ]
+    }
+  ]
+}

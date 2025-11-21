@@ -1,0 +1,8 @@
+{
+  "task_id": "e2e_test_full",
+  "scenario": "完整功能测试",
+  "final_value": 99955.46250000002,
+  "bar_count": 93,
+  "trade_count": 2,
+  "timestamp": "2025-11-22T00:03:37.314477"
+}

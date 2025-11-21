@@ -1,0 +1,120 @@
+{
+  "poc_name": "Backtrader 回测引擎集成 POC",
+  "delivery_date": "2025-11-22T00:14:12.592300",
+  "categories": [
+    {
+      "category": "源代码",
+      "description": "核心功能实现",
+      "files": [
+        {
+          "file": "src/01_test_parquet_read.py",
+          "description": "Parquet 数据读取测试",
+          "lines": "~150"
+        },
+        {
+          "file": "src/02_cached_datafeed.py",
+          "description": "带缓存的 DataFeed 实现（完整版）",
+          "lines": "~350"
+        },
+        {
+          "file": "src/cached_datafeed.py",
+          "description": "可复用的 DataFeed 模块",
+          "lines": "~250"
+        },
+        {
+          "file": "src/03_strategy_with_factors.py",
+          "description": "MA 策略 + 因子收集",
+          "lines": "~350"
+        },
+        {
+          "file": "src/04_rabbitmq_communication.py",
+          "description": "RabbitMQ 消息通信",
+          "lines": "~450"
+        },
+        {
+          "file": "src/05_complete_backtest.py",
+          "description": "完整回测脚本",
+          "lines": "~650"
+        },
+        {
+          "file": "src/06_checkpoint_resume.py",
+          "description": "断点续跑实现",
+          "lines": "~650"
+        },
+        {
+          "file": "src/07_performance_benchmark.py",
+          "description": "性能基准测试",
+          "lines": "~450"
+        },
+        {
+          "file": "src/08_e2e_integration_test.py",
+          "description": "端到端集成测试",
+          "lines": "~550"
+        },
+        {
+          "file": "src/10_final_verification.py",
+          "description": "最终验收脚本",
+          "lines": "~300"
+        }
+      ]
+    },
+    {
+      "category": "测试结果",
+      "description": "各项测试的输出结果",
+      "files": [
+        {
+          "file": "results/trades_with_factors.parquet",
+          "description": "交易记录（15个因子字段）"
+        },
+        {
+          "file": "results/backtest_day5_001_result.json",
+          "description": "完整回测统计结果"
+        },
+        {
+          "file": "results/checkpoint_test_001_result.json",
+          "description": "断点续跑测试结果"
+        },
+        {
+          "file": "results/performance_benchmark_result.json",
+          "description": "性能基准测试结果"
+        },
+        {
+          "file": "results/e2e_integration_test_report.json",
+          "description": "端到端集成测试报告"
+        }
+      ]
+    },
+    {
+      "category": "文档",
+      "description": "POC 相关文档",
+      "files": [
+        {
+          "file": "POC_PROGRESS.md",
+          "description": "POC 进度跟踪文档",
+          "pages": "~15"
+        },
+        {
+          "file": "POC_FINAL_REPORT.md",
+          "description": "POC 最终报告",
+          "pages": "~20"
+        },
+        {
+          "file": "README.md",
+          "description": "项目说明文档",
+          "pages": "~5"
+        }
+      ]
+    },
+    {
+      "category": "测试数据",
+      "description": "POC 使用的测试数据",
+      "files": [
+        {
+          "file": "backend/storage/datasets/ES/ES/1s/dt=2022-12-15/**/*.parquet",
+          "description": "ES 1秒级数据（6个月，1950万行）",
+          "size": "~400 MB"
+        }
+      ]
+    }
+  ]
+}

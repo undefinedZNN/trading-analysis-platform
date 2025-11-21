@@ -1,0 +1,40 @@
+{
+  "task_id": "backtest_day5_001",
+  "parameters": {
+    "symbol": "ES",
+    "start_date": "2022-12-15 00:06:15",
+    "end_date": "2022-12-15 23:59:59",
+    "aggregate_timeframe": "1min",
+    "initial_cash": 100000.0,
+    "commission": 0.001,
+    "fast_period": 10,
+    "slow_period": 20
+  },
+  "statistics": {
+    "initial_cash": 100000.0,
+    "final_value": 99955.46250000002,
+    "total_pnl": -44.53749999997672,
+    "total_return": -0.04453749999997672,
+    "total_trades": 2,
+    "winning_trades": 0,
+    "losing_trades": 2,
+    "win_rate": 0.0,
+    "avg_pnl": -12.625,
+    "avg_winning_pnl": 0,
+    "avg_losing_pnl": -12.625,
+    "max_winning_pnl": 0,
+    "max_losing_pnl": -16.5,
+    "profit_factor": 0.0,
+    "max_drawdown": 25.25,
+    "max_drawdown_percent": 0.02525,
+    "sharpe_ratio": -36.57168349008078
+  },
+  "execution": {
+    "elapsed_seconds": 0.007714986801147461,
+    "trades_count": 2
+  },
+  "files": {
+    "trades": "../results/backtest_day5_001_trades.parquet"
+  },
+  "timestamp": "2025-11-21T23:43:37.492498"
+}

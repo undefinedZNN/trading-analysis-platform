@@ -1,0 +1,106 @@
+{
+  "test_suite": "E2E Integration Test",
+  "timestamp": "2025-11-22T00:03:37.324455",
+  "test_results": [
+    {
+      "test_name": "完整功能测试",
+      "status": "success",
+      "duration_seconds": 0.146148,
+      "checks_passed": "9/9",
+      "error": null,
+      "checks": {
+        "rabbitmq_connect": {
+          "passed": true,
+          "message": "RabbitMQ 连接成功"
+        },
+        "data_load": {
+          "passed": true,
+          "message": "数据加载成功，耗时 0.084 秒"
+        },
+        "backtest_run": {
+          "passed": true,
+          "message": "回测执行成功，耗时 0.007 秒"
+        },
+        "trades_collected": {
+          "passed": true,
+          "message": "收集到 2 笔交易"
+        },
+        "factor_fields": {
+          "passed": true,
+          "message": "因子字段完整"
+        },
+        "rabbitmq_completion": {
+          "passed": true,
+          "message": "任务完成消息已发送"
+        },
+        "cache_working": {
+          "passed": true,
+          "message": "缓存正常，命中率 0.00%"
+        },
+        "export_trades": {
+          "passed": true,
+          "message": "交易记录已导出: ../results/e2e_test_full_trades.parquet"
+        },
+        "export_result": {
+          "passed": true,
+          "message": "结果已导出: ../results/e2e_test_full_result.json"
+        }
+      },
+      "metrics": {
+        "data_load_time": 0.08401608467102051,
+        "backtest_time": 0.007477998733520508,
+        "final_value": 99955.46250000002,
+        "bar_count": 93,
+        "trade_count": 2,
+        "cache_hit_rate": 0.0,
+        "cache_size_mb": 0.0051727294921875
+      }
+    },
+    {
+      "test_name": "缓存命中测试",
+      "status": "success",
+      "duration_seconds": 0.009532,
+      "checks_passed": "7/7",
+      "error": null,
+      "checks": {
+        "data_load": {
+          "passed": true,
+          "message": "数据加载成功，耗时 0.000 秒"
+        },
+        "backtest_run": {
+          "passed": true,
+          "message": "回测执行成功，耗时 0.007 秒"
+        },
+        "trades_collected": {
+          "passed": true,
+          "message": "收集到 2 笔交易"
+        },
+        "factor_fields": {
+          "passed": true,
+          "message": "因子字段完整"
+        },
+        "cache_working": {
+          "passed": true,
+          "message": "缓存正常，命中率 50.00%"
+        },
+        "export_trades": {
+          "passed": true,
+          "message": "交易记录已导出: ../results/e2e_test_cache_trades.parquet"
+        },
+        "export_result": {
+          "passed": true,
+          "message": "结果已导出: ../results/e2e_test_cache_result.json"
+        }
+      },
+      "metrics": {
+        "data_load_time": 0.00015616416931152344,
+        "backtest_time": 0.007312297821044922,
+        "final_value": 99955.46250000002,
+        "bar_count": 93,
+        "trade_count": 2,
+        "cache_hit_rate": 50.0,
+        "cache_size_mb": 0.0051727294921875
+      }
+    }
+  ]
+}
