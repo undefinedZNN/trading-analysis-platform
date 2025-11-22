@@ -772,4 +772,114 @@ export class BacktestTasksService {
     }
     return { relative: normalized, absolute: path.resolve(BACKTEST_RESULTS_ROOT, normalized) };
   }
+
+  // ============================================
+  // Checkpoint 相关方法
+  // ============================================
+
+  /**
+   * 更新任务的 Checkpoint 状态
+   * 
+   * @param taskId 任务ID
+   * @param data Checkpoint 数据
+   */
+  async updateCheckpointStatus(
+    taskId: string,
+    data: {
+      lastCheckpointBar?: number;
+      checkpointFilePath?: string;
+      canResume?: boolean;
+    },
+  ): Promise<void> {
+    this.logger.log(`Updating checkpoint status for task: ${taskId}`);
+
+    const task = await this.findOne(taskId);
+    
+    if (data.lastCheckpointBar !== undefined) {
+      task.lastCheckpointBar = data.lastCheckpointBar;
+    }
+    if (data.checkpointFilePath !== undefined) {
+      task.checkpointFilePath = data.checkpointFilePath;
+    }
+    if (data.canResume !== undefined) {
+      task.canResume = data.canResume;
+    }
+
+    await this.backtestTaskRepository.save(task);
+    
+    this.logger.log(
+      `Checkpoint status updated: bar=${data.lastCheckpointBar}, canResume=${data.canResume}`,
+    );
+  }
+
+  /**
+   * 查询可恢复的任务列表
+   * 
+   * @returns 可恢复的任务列表
+   */
+  async findResumableTasks(): Promise<BacktestTaskEntity[]> {
+    this.logger.debug('Finding resumable tasks');
+
+    return await this.backtestTaskRepository.find({
+      where: {
+        canResume: true,
+        status: BacktestTaskStatus.FAILED, // 只查找失败的任务
+      },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+  }
+
+  // ============================================
+  // 文件路径相关方法
+  // ============================================
+
+  /**
+   * 更新任务的 Parquet 文件路径
+   * 
+   * @param taskId 任务ID
+   * @param data 文件路径数据
+   */
+  async updateFilePaths(
+    taskId: string,
+    data: {
+      tradesFilePath?: string;
+      equityFilePath?: string;
+    },
+  ): Promise<void> {
+    this.logger.log(`Updating file paths for task: ${taskId}`);
+
+    const task = await this.findOne(taskId);
+    
+    if (data.tradesFilePath !== undefined) {
+      task.tradesFilePath = data.tradesFilePath;
+    }
+    if (data.equityFilePath !== undefined) {
+      task.equityFilePath = data.equityFilePath;
+    }
+
+    await this.backtestTaskRepository.save(task);
+    
+    this.logger.log(
+      `File paths updated: trades=${data.tradesFilePath}, equity=${data.equityFilePath}`,
+    );
+  }
+
+  /**
+   * 查询有文件的任务列表
+   * 
+   * @returns 有文件的任务列表
+   */
+  async findTasksWithFiles(): Promise<BacktestTaskEntity[]> {
+    this.logger.debug('Finding tasks with files');
+
+    // 使用 QueryBuilder 查询有文件路径的任务
+    return await this.backtestTaskRepository
+      .createQueryBuilder('task')
+      .where('task.tradesFilePath IS NOT NULL')
+      .orWhere('task.equityFilePath IS NOT NULL')
+      .orderBy('task.completedAt', 'DESC')
+      .getMany();
+  }
 }

@@ -28,11 +28,33 @@ class FactorCollector(bt.Observer):
     
     def __init__(self):
         """初始化因子收集器"""
-        self.trades: List[Dict[str, Any]] = []
-        self.current_trade_info: Dict[int, Dict[str, Any]] = {}  # order_ref -> trade_info
-        self.strategy = None
+        # 使用私有属性避免Backtrader的属性拦截
+        object.__setattr__(self, '_trades_list', [])
+        object.__setattr__(self, '_current_trade_info', {})
+        object.__setattr__(self, '_strategy', None)
+        object.__setattr__(self, '_factors_list', [])  # 所有因子（包括entry/holding/exit）
         
         logger.info("FactorCollector initialized")
+    
+    @property
+    def trades(self) -> List[Dict[str, Any]]:
+        """获取交易记录"""
+        return object.__getattribute__(self, '_trades_list')
+    
+    @property
+    def factors(self) -> List[Dict[str, Any]]:
+        """获取所有因子"""
+        return object.__getattribute__(self, '_factors_list')
+    
+    @property
+    def current_trade_info(self) -> Dict[int, Dict[str, Any]]:
+        """获取当前交易信息"""
+        return object.__getattribute__(self, '_current_trade_info')
+    
+    @property
+    def strategy(self) -> Optional[bt.Strategy]:
+        """获取策略"""
+        return object.__getattribute__(self, '_strategy')
     
     def set_strategy(self, strategy: bt.Strategy) -> None:
         """
@@ -41,7 +63,7 @@ class FactorCollector(bt.Observer):
         Args:
             strategy: Backtrader 策略实例
         """
-        self.strategy = strategy
+        object.__setattr__(self, '_strategy', strategy)
         logger.debug(f"Strategy set: {strategy.__class__.__name__}")
     
     def record_entry_factors(
@@ -108,51 +130,79 @@ class FactorCollector(bt.Observer):
     
     def record_exit_factors(
         self,
-        order: bt.Order,
-        pnl: float,
-        pnl_percent: float,
-        holding_bars: int,
+        order: bt.Order = None,
+        pnl: float = 0.0,
+        pnl_percent: float = 0.0,
+        holding_bars: int = 0,
         **custom_factors
     ) -> None:
         """
         记录出场因子
         
         Args:
-            order: 订单对象
+            order: 订单对象（可选，来自notify_trade时可能为None）
             pnl: 盈亏金额
             pnl_percent: 盈亏比例
             holding_bars: 持仓K线数
             **custom_factors: 自定义因子
         """
-        # 查找对应的入场订单
-        entry_order_ref = self._find_entry_order_ref(order.ref)
-        
-        if entry_order_ref is None or entry_order_ref not in self.current_trade_info:
-            logger.warning(f"Entry order for exit order {order.ref} not found")
-            return
-        
-        # 获取入场信息
-        entry_factors = self.current_trade_info.pop(entry_order_ref)
-        
-        # 出场因子
-        exit_factors = {
-            'exit_datetime': self.strategy.data.datetime.datetime(0),
-            'exit_price': order.executed.price,
-            'exit_size': order.executed.size,
-            'exit_order_ref': order.ref,
-            'exit_commission': order.executed.comm,
-            'pnl': pnl,
-            'pnl_percent': pnl_percent,
-            'holding_bars': holding_bars,
-            **custom_factors
-        }
+        # 如果没有order，直接使用最近的入场订单
+        if order is None:
+            # 从notify_trade调用，没有order对象
+            # 简化处理：如果有未完成的交易，就使用第一个
+            if not self.current_trade_info:
+                logger.warning("No active trades to record exit factors")
+                return
+            
+            # 获取第一个入场信息（FIFO）
+            entry_order_ref = list(self.current_trade_info.keys())[0]
+            entry_factors = self.current_trade_info.pop(entry_order_ref)
+            
+            # 出场因子（没有order信息）
+            exit_factors = {
+                'exit_datetime': self.strategy.data.datetime.datetime(0),
+                'exit_price': custom_factors.get('close', 0),  # 从custom_factors获取
+                'exit_size': 0,  # 未知
+                'exit_order_ref': None,
+                'exit_commission': 0,  # 未知
+                'pnl': pnl,
+                'pnl_percent': pnl_percent,
+                'holding_bars': holding_bars,
+                **custom_factors
+            }
+        else:
+            # 有order对象，正常处理
+            # 查找对应的入场订单
+            entry_order_ref = self._find_entry_order_ref(order.ref)
+            
+            if entry_order_ref is None or entry_order_ref not in self.current_trade_info:
+                logger.warning(f"Entry order for exit order {order.ref} not found")
+                return
+            
+            # 获取入场信息
+            entry_factors = self.current_trade_info.pop(entry_order_ref)
+            
+            # 出场因子
+            exit_factors = {
+                'exit_datetime': self.strategy.data.datetime.datetime(0),
+                'exit_price': order.executed.price,
+                'exit_size': order.executed.size,
+                'exit_order_ref': order.ref,
+                'exit_commission': order.executed.comm,
+                'pnl': pnl,
+                'pnl_percent': pnl_percent,
+                'holding_bars': holding_bars,
+                **custom_factors
+            }
         
         # 合并入场和出场因子
-        full_trade_record = {**entry_factors, **exit_factors}
+        full_trade_record = {**entry_factors, **exit_factors, 'factor_type': 'exit'}
         
         self.trades.append(full_trade_record)
+        self._factors_list.append(full_trade_record)
         
-        logger.debug(f"Exit factors recorded: order_ref={order.ref}, pnl={pnl:.2f}, pnl_percent={pnl_percent:.2%}")
+        order_ref = order.ref if order is not None else None
+        logger.debug(f"Exit factors recorded: order_ref={order_ref}, pnl={pnl:.2f}, pnl_percent={pnl_percent:.2%}")
     
     def _find_entry_order_ref(self, exit_order_ref: int) -> Optional[int]:
         """

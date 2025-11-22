@@ -198,6 +198,7 @@ export class BacktestTaskEntity {
   /**
    * 回测结果摘要 (JSONB)
    * 完成后填充，包含总收益率、最大回撤等关键指标
+   * @deprecated 使用 backtest_results 表替代
    */
   @Column({ name: 'result_summary', type: 'jsonb', nullable: true })
   resultSummary?: ResultSummary;
@@ -205,9 +206,62 @@ export class BacktestTaskEntity {
   /**
    * 回测结果详细数据文件路径
    * 指向DuckDB或Parquet文件
+   * @deprecated 使用 tradesFilePath 和 equityFilePath 替代
    */
   @Column({ name: 'result_file_path', type: 'varchar', length: 500, nullable: true })
   resultFilePath?: string;
+
+  /**
+   * 交易明细数据文件路径（Parquet）
+   * 包含所有交易记录和因子数据
+   */
+  @Column({ name: 'trades_file_path', type: 'varchar', length: 500, nullable: true })
+  tradesFilePath?: string;
+
+  /**
+   * 权益曲线数据文件路径（Parquet）
+   * 包含每根K线的权益数据
+   */
+  @Column({ name: 'equity_file_path', type: 'varchar', length: 500, nullable: true })
+  equityFilePath?: string;
+
+  // ============================================
+  // Checkpoint 相关字段
+  // ============================================
+
+  /**
+   * 是否启用 Checkpoint
+   * 启用后会定期保存回测状态，支持断点续传
+   */
+  @Column({ name: 'checkpoint_enabled', type: 'boolean', default: true })
+  checkpointEnabled!: boolean;
+
+  /**
+   * Checkpoint 间隔（K线数量）
+   * 例如: 1000 表示每处理1000根K线保存一次
+   */
+  @Column({ name: 'checkpoint_interval', type: 'integer', default: 1000 })
+  checkpointInterval!: number;
+
+  /**
+   * 最后一次 Checkpoint 的K线位置
+   */
+  @Column({ name: 'last_checkpoint_bar', type: 'integer', nullable: true })
+  lastCheckpointBar?: number;
+
+  /**
+   * Checkpoint 文件路径
+   */
+  @Column({ name: 'checkpoint_file_path', type: 'varchar', length: 500, nullable: true })
+  checkpointFilePath?: string;
+
+  /**
+   * 是否可以恢复
+   * true: 存在有效的 checkpoint，可以从断点恢复
+   * false: 无法恢复，需要重新开始
+   */
+  @Column({ name: 'can_resume', type: 'boolean', default: false })
+  canResume!: boolean;
 
   /**
    * 当前分配的 Worker ID

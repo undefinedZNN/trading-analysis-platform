@@ -34,8 +34,9 @@ class BaseStrategy(bt.Strategy):
         self.order = None
         self.trade_entry_bar = None
         
-        # 因子收集器（由外部设置）
+        # 因子收集器（由外部设置或自动查找）
         self.factor_collector = None
+        self._factor_collector_initialized = False
         
         # 消息发送器（由外部设置）
         self.message_sender = None
@@ -70,10 +71,37 @@ class BaseStrategy(bt.Strategy):
             else:
                 logger.info(log_msg)
     
+    def start(self) -> None:
+        """
+        策略开始时调用（Backtrader回调）
+        
+        自动初始化因子收集器等组件
+        """
+        self._init_factor_collector()
+    
+    def _init_factor_collector(self) -> None:
+        """
+        自动初始化因子收集器
+        
+        从策略的observers中查找FactorCollector并自动关联
+        """
+        if self._factor_collector_initialized:
+            return
+        
+        self._factor_collector_initialized = True
+        
+        # 尝试从observers中查找FactorCollector
+        if hasattr(self, 'getobservers'):
+            for obs in self.getobservers():
+                if obs.__class__.__name__ == 'FactorCollector':
+                    self.set_factor_collector(obs)
+                    self.log("FactorCollector auto-discovered", level='DEBUG')
+                    break
+    
     def set_factor_collector(self, collector) -> None:
         """设置因子收集器"""
         self.factor_collector = collector
-        if collector:
+        if collector is not None:
             collector.set_strategy(self)
             self.log("Factor collector set", level='DEBUG')
     
@@ -215,7 +243,7 @@ class BaseStrategy(bt.Strategy):
         self.trade_entry_bar = len(self.data) - 1
         
         # 收集入场因子
-        if self.factor_collector:
+        if self.factor_collector is not None:
             entry_factors = self.get_entry_factors()
             self.factor_collector.record_entry_factors(
                 order=order,
@@ -265,7 +293,7 @@ class BaseStrategy(bt.Strategy):
         self.log(f'TRADE PROFIT: gross={pnl:.2f}, net={pnl_net:.2f}, bars={holding_bars}')
         
         # 收集出场因子（在交易关闭时）
-        if self.factor_collector:
+        if self.factor_collector is not None:
             exit_factors = self.get_exit_factors()
             self.factor_collector.record_exit_factors(
                 order=None,  # Trade 回调中没有 order 对象

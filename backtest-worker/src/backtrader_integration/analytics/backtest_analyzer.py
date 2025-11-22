@@ -194,28 +194,26 @@ class BacktestAnalyzer:
                         trades_data['holding_periods'].append(trade['holding_period'])
             
             # 尝试从因子收集器获取交易数据
-            if hasattr(strategy, 'getobserverbyname'):
+            # 优先使用 strategy.factor_collector（BaseStrategy设置的）
+            if hasattr(strategy, 'factor_collector') and strategy.factor_collector is not None:
                 try:
-                    factor_collector = strategy.getobserverbyname('factorcollector')
-                    if factor_collector and hasattr(factor_collector, 'factors'):
-                        # 从因子数据中提取交易信息
-                        exit_factors = [f for f in factor_collector.factors if f.get('factor_type') == 'exit']
-                        
-                        for factor in exit_factors:
-                            if 'pnl' in factor:
-                                trades_data['pnl'].append(factor['pnl'])
-                            if 'holding_bars' in factor:
-                                trades_data['holding_periods'].append(factor['holding_bars'])
-                            if 'timestamp' in factor:
-                                if trades_data['end_date'] is None or factor['timestamp'] > trades_data['end_date']:
-                                    trades_data['end_date'] = factor['timestamp']
-                        
-                        entry_factors = [f for f in factor_collector.factors if f.get('factor_type') == 'entry']
-                        if entry_factors and 'timestamp' in entry_factors[0]:
-                            trades_data['start_date'] = entry_factors[0]['timestamp']
+                    factor_collector = strategy.factor_collector
+                    
+                    # 直接从trades列表获取（包含完整的入场和出场信息）
+                    for trade in factor_collector.trades:
+                        if 'pnl' in trade:
+                            trades_data['pnl'].append(trade['pnl'])
+                        if 'holding_bars' in trade:
+                            trades_data['holding_periods'].append(trade['holding_bars'])
+                        if 'entry_datetime' in trade:
+                            if trades_data['start_date'] is None or trade['entry_datetime'] < trades_data['start_date']:
+                                trades_data['start_date'] = trade['entry_datetime']
+                        if 'exit_datetime' in trade:
+                            if trades_data['end_date'] is None or trade['exit_datetime'] > trades_data['end_date']:
+                                trades_data['end_date'] = trade['exit_datetime']
                 
                 except Exception as e:
-                    logger.debug(f"Could not get factor collector: {e}")
+                    logger.warning(f"Could not extract trades from factor collector: {e}")
             
             # 如果没有找到日期，使用数据的日期范围
             if trades_data['start_date'] is None and hasattr(strategy, 'data'):
@@ -255,27 +253,31 @@ class BacktestAnalyzer:
         
         try:
             # 尝试从策略的观察者获取权益曲线
-            if hasattr(strategy, '_observers'):
-                for observer in strategy._observers:
+            # 使用 getobservers() 方法而不是 _observers 属性
+            if hasattr(strategy, 'getobservers'):
+                for observer in strategy.getobservers():
                     # Backtrader 的内置 Value 观察者
                     if observer.__class__.__name__ == 'Value':
-                        # 提取所有权益值
-                        for i in range(len(observer.lines.value)):
-                            try:
-                                value = observer.lines.value[i]
-                                if value > 0:  # 过滤无效值
-                                    equity_curve.append(value)
-                            except:
-                                pass
+                        # 使用 .array 属性提取所有权益值
+                        value_line = observer.lines.value
+                        equity_array = value_line.array
+                        
+                        # 过滤有效值（>0 且不是 nan）
+                        for value in equity_array:
+                            if value > 0 and value == value:  # value == value 用于过滤 nan
+                                equity_curve.append(value)
+                        
+                        logger.debug(f"Extracted {len(equity_curve)} equity curve points from Value observer")
                         break
             
-            # 如果没有找到，创建简单的权益曲线（只有初始和最终值）
+            # 如果没有找到，尝试从策略本身构建权益曲线
             if len(equity_curve) == 0:
+                logger.warning("No Value observer found, using simple equity curve (initial + final)")
                 equity_curve = [initial_cash, strategy.broker.getvalue()]
         
         except Exception as e:
             logger.warning(f"Failed to extract equity curve: {e}")
-            equity_curve = [initial_cash]
+            equity_curve = [initial_cash, strategy.broker.getvalue()]
         
         return np.array(equity_curve)
     

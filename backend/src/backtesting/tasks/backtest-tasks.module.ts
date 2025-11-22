@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { BacktestTaskEntity, TaskLogEntity } from './entities';
+import {
+  BacktestTaskEntity,
+  TaskLogEntity,
+  BacktestResultEntity,
+} from './entities';
 import { BacktestTasksService } from './backtest-tasks.service';
 import { TaskLogsService } from './task-logs.service';
 import { TaskExecutorService } from './task-executor.service';
@@ -14,6 +18,7 @@ import { ScriptVersionEntity } from '../entities/script-version.entity';
 import { TradingDataModule } from '../../trading-data/trading-data.module';
 import { WorkerClientModule } from '../worker-client/worker-client.module';
 import { ServiceRegistryModule } from '../service-registry/service-registry.module';
+import { BacktestResultRepository } from './repositories';
 
 /**
  * 回测任务管理模块
@@ -25,6 +30,7 @@ import { ServiceRegistryModule } from '../service-registry/service-registry.modu
     TypeOrmModule.forFeature([
       BacktestTaskEntity,
       TaskLogEntity,
+      BacktestResultEntity, // 新增
       StrategyEntity,
       ScriptVersionEntity,
     ]),
@@ -37,6 +43,7 @@ import { ServiceRegistryModule } from '../service-registry/service-registry.modu
     BacktestTasksService,
     TaskLogsService,
     TaskExecutorService,
+    BacktestResultRepository, // 新增
     StrategiesService,
     StrategyScriptParser,
     StrategyScriptValidator,
@@ -46,6 +53,7 @@ import { ServiceRegistryModule } from '../service-registry/service-registry.modu
     BacktestTasksService,
     TaskLogsService,
     TaskExecutorService,
+    BacktestResultRepository, // 新增，供其他模块使用
   ],
 })
 export class BacktestTasksModule {}
