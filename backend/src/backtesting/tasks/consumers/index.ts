@@ -1,2 +1,2 @@
-// TODO: RabbitMQ消费者待实现
-// export * from './backtest-result.consumer';
+// RabbitMQ消息消费者
+export * from './backtest-message.consumer';

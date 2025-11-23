@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BacktestTasksService } from './backtest-tasks.service';
@@ -10,6 +10,7 @@ import { BacktestTaskEntity, BacktestTaskStatus, ResultSummary, LogLevel } from 
 import { WorkerClientService } from '../worker-client/worker-client.service';
 import { ExecutionConfigDto } from './dto/create-backtest-task.dto';
 import { DatasetEntity } from '../../trading-data/entities/dataset.entity';
+import { RabbitMQTaskDispatcherService } from './rabbitmq-task-dispatcher.service';
 
 /**
  * Worker执行配置DTO
@@ -61,6 +62,8 @@ export class TaskExecutorService {
    */
   private readonly PROGRESS_UPDATE_INTERVAL = 1000; // 1秒
   
+  private readonly useRabbitMQ: boolean;
+
   constructor(
     private readonly tasksService: BacktestTasksService,
     private readonly logsService: TaskLogsService,
@@ -69,8 +72,17 @@ export class TaskExecutorService {
     private readonly workerClient: WorkerClientService,
     @InjectRepository(BacktestTaskEntity)
     private readonly taskRepository: Repository<BacktestTaskEntity>,
+    @Optional() private readonly rabbitmqDispatcher?: RabbitMQTaskDispatcherService,
   ) {
-    this.logger.log('TaskExecutorService initialized (Worker mode only)');
+    // 检查是否启用RabbitMQ
+    this.useRabbitMQ = (process.env.USE_RABBITMQ || 'false').toLowerCase() === 'true';
+    this.logger.log(`TaskExecutorService initialized (Mode: ${this.useRabbitMQ ? 'RabbitMQ' : 'HTTP'})`);
+    
+    if (this.useRabbitMQ && this.rabbitmqDispatcher) {
+      this.logger.log('RabbitMQ dispatcher configured successfully');
+    } else if (this.useRabbitMQ && !this.rabbitmqDispatcher) {
+      this.logger.warn('USE_RABBITMQ is true but RabbitMQTaskDispatcherService is not available');
+    }
   }
 
   /**
@@ -91,21 +103,25 @@ export class TaskExecutorService {
         );
       }
       
-      // 2. 更新状态为运行中
+      // 2. 更新状态为QUEUED（等待Worker）
       await this.tasksService.updateStatus(
         taskId,
-        BacktestTaskStatus.RUNNING,
-        { startedAt: new Date() },
+        BacktestTaskStatus.PENDING,
+        { },
       );
       
       await this.logsService.create(
         taskId,
         LogLevel.INFO,
-        'Starting task execution via Worker',
+        `Starting task execution via ${this.useRabbitMQ ? 'RabbitMQ' : 'HTTP Worker'}`,
       );
       
-      // 3. 使用 Worker 模式执行
-      await this.executeViaWorker(task);
+      // 3. 根据配置选择分发方式
+      if (this.useRabbitMQ && this.rabbitmqDispatcher) {
+        await this.executeViaRabbitMQ(task);
+      } else {
+        await this.executeViaWorker(task);
+      }
       
     } catch (error) {
       this.logger.error(
@@ -134,8 +150,12 @@ export class TaskExecutorService {
         );
       }
       
-      // Worker 取消 - 发送取消请求到 Worker
-      await this.workerClient.cancelTask(taskId);
+      // 根据配置选择取消方式
+      if (this.useRabbitMQ && this.rabbitmqDispatcher) {
+        await this.rabbitmqDispatcher.cancelTask(taskId, 'User cancelled');
+      } else {
+        await this.workerClient.cancelTask(taskId);
+      }
       
       await this.tasksService.updateStatus(
         taskId,
@@ -207,6 +227,36 @@ export class TaskExecutorService {
     } catch (error) {
       this.logger.error(
         `Worker execution failed for task ${task.taskId}: ${(error as Error).message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 通过RabbitMQ执行任务
+   * 
+   * @param task 任务实体
+   */
+  private async executeViaRabbitMQ(task: BacktestTaskEntity): Promise<void> {
+    this.logger.log(`Executing task ${task.taskId} via RabbitMQ`);
+    
+    try {
+      if (!this.rabbitmqDispatcher) {
+        throw new Error('RabbitMQ dispatcher not configured');
+      }
+
+      // 发布任务到RabbitMQ
+      const dispatched = await this.rabbitmqDispatcher.dispatchTask(task);
+
+      if (!dispatched) {
+        throw new Error('Failed to dispatch task to RabbitMQ');
+      }
+
+      this.logger.log(`Task ${task.taskId} published to RabbitMQ successfully`);
+
+    } catch (error) {
+      this.logger.error(
+        `RabbitMQ execution failed for task ${task.taskId}: ${(error as Error).message}`,
       );
       throw error;
     }

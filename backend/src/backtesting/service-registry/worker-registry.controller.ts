@@ -41,6 +41,7 @@ export class WorkerRegistryController {
   }
 
   @Post('heartbeat')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Worker心跳' })
   @ApiResponse({ status: 200, description: '心跳处理成功' })
   heartbeat(@Body(new ValidationPipe({ transform: true })) body: WorkerHeartbeatDto) {

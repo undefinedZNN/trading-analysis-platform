@@ -76,13 +76,39 @@ def register_worker():
         print(f"❌ 注册出错: {e}")
         return None
 
-def send_heartbeat(worker_id):
+def send_heartbeat(worker_id, running_tasks=0):
     """发送心跳"""
+    cpu_usage = psutil.cpu_percent(interval=0.1)
+    memory_usage = psutil.virtual_memory().percent
+    
+    # 根据实际运行的任务数判断状态（优先级更高）
+    if running_tasks > 0:
+        # 有任务运行时，根据负载判断
+        if cpu_usage >= 80 or memory_usage >= 90:
+            status = "overloaded"
+        else:
+            status = "busy"
+    else:
+        # 没有任务运行时为空闲（即使资源使用率高也是空闲）
+        status = "idle"
+    
+    # 计算当前负载 (0.0 - 1.0)
+    # 如果有任务，使用实际资源使用率；否则负载为0
+    if running_tasks > 0:
+        current_load = max(cpu_usage / 100, memory_usage / 100)
+    else:
+        current_load = 0.0
+    
+    # 使用正确的DTO格式（匹配TaskMetricsDto）
     heartbeat_data = {
         "workerId": worker_id,
-        "cpuUsage": psutil.cpu_percent(interval=0.1),
-        "memoryUsage": psutil.virtual_memory().percent,
-        "activeTasks": 0,
+        "status": status,
+        "currentLoad": current_load,
+        "metrics": {
+            "cpu": cpu_usage,           # 对应 TaskMetricsDto.cpu
+            "memoryUsed": memory_usage, # 对应 TaskMetricsDto.memoryUsed
+            "runningTasks": running_tasks,  # 对应 TaskMetricsDto.runningTasks
+        }
     }
     
     try:
@@ -93,10 +119,12 @@ def send_heartbeat(worker_id):
             timeout=5
         )
         
-        if response.status_code == 200:
+        if response.status_code in [200, 201]:  # 接受200和201（兼容旧版本Backend）
             return True
         else:
             print(f"⚠️  心跳失败: {response.status_code}")
+            if response.status_code == 400:
+                print(f"   错误详情: {response.text}")
             return False
             
     except Exception as e:
@@ -109,14 +137,24 @@ def keep_alive(worker_id):
     print("   按 Ctrl+C 停止\n")
     
     heartbeat_count = 0
+    running_tasks = 0  # TODO: 实际应该从任务管理器获取
     
     try:
         while True:
-            if send_heartbeat(worker_id):
+            if send_heartbeat(worker_id, running_tasks):
                 heartbeat_count += 1
                 cpu = psutil.cpu_percent(interval=0.1)
                 mem = psutil.virtual_memory().percent
-                print(f"💓 心跳 #{heartbeat_count} - CPU: {cpu:.1f}% | 内存: {mem:.1f}% | 状态: 空闲")
+                
+                # 显示状态（与发送的状态一致）
+                if running_tasks > 0:
+                    status = "过载" if (cpu >= 80 or mem >= 90) else "繁忙"
+                    status_emoji = "⚠️" if cpu >= 80 or mem >= 90 else "🔄"
+                else:
+                    status = "空闲"
+                    status_emoji = "✅"
+                
+                print(f"💓 心跳 #{heartbeat_count} - CPU: {cpu:.1f}% | 内存: {mem:.1f}% | 任务: {running_tasks} | 状态: {status_emoji} {status}")
             
             time.sleep(30)  # 每 30 秒发送一次心跳
             

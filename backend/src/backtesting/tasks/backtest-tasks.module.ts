@@ -25,9 +25,10 @@ import {
   BacktestAnalysisService,
   BacktestResultService,
 } from './services';
-// TODO: RabbitMQ消费者待实现
-// import { BacktestResultConsumer } from './consumers';
 import { BacktestResultsController } from './controllers';
+import { RabbitMQModule } from '../rabbitmq';
+import { BacktestMessageConsumer } from './consumers';
+import { RabbitMQTaskDispatcherService } from './rabbitmq-task-dispatcher.service';
 
 /**
  * 回测任务管理模块
@@ -47,6 +48,7 @@ import { BacktestResultsController } from './controllers';
     TradingDataModule, // 导入 TradingDataModule 以访问 TradingDataService
     WorkerClientModule,
     ServiceRegistryModule,
+    RabbitMQModule, // 导入RabbitMQ模块
   ],
   controllers: [
     BacktestTasksController,
@@ -57,6 +59,7 @@ import { BacktestResultsController } from './controllers';
     BacktestTasksService,
     TaskLogsService,
     TaskExecutorService,
+    RabbitMQTaskDispatcherService,
     
     // 结果相关服务（Day 2-3 新增）
     BacktestResultRepository,
@@ -64,8 +67,8 @@ import { BacktestResultsController } from './controllers';
     BacktestAnalysisService,
     BacktestResultService,
     
-    // 消息消费者（Day 4 新增） - 待实现RabbitMQ
-    // BacktestResultConsumer,
+    // RabbitMQ消息消费者
+    BacktestMessageConsumer,
     
     // 策略相关服务
     StrategiesService,

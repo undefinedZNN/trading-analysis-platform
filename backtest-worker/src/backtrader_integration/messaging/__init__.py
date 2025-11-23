@@ -21,6 +21,12 @@ from .progress_tracker import (
     HeartbeatSender,
 )
 
+from .task_consumer import (
+    BacktestTaskConsumer,
+    TaskConsumerConfig,
+    TaskMessage,
+)
+
 __all__ = [
     'RabbitMQClient',
     'MessageConsumer',
@@ -28,5 +34,8 @@ __all__ = [
     'RabbitMQConfig',
     'ProgressTracker',
     'HeartbeatSender',
+    'BacktestTaskConsumer',
+    'TaskConsumerConfig',
+    'TaskMessage',
 ]
 
