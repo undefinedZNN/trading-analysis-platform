@@ -201,7 +201,7 @@ export class BacktestTaskEntity {
    * 完成后填充，包含总收益率、最大回撤等关键指标
    * @deprecated 使用 backtest_results 表替代
    */
-  @Column({ name: 'result_summary', type: 'jsonb', nullable: true })
+  @Column({ name: 'result_summary_deprecated', type: 'jsonb', nullable: true })
   resultSummary?: ResultSummary;
 
   /**
@@ -209,7 +209,7 @@ export class BacktestTaskEntity {
    * 指向DuckDB或Parquet文件
    * @deprecated 使用 tradesFilePath 和 equityFilePath 替代
    */
-  @Column({ name: 'result_file_path', type: 'varchar', length: 500, nullable: true })
+  @Column({ name: 'result_file_path_deprecated', type: 'varchar', length: 500, nullable: true })
   resultFilePath?: string;
 
   /**

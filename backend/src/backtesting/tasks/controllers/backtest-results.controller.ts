@@ -556,7 +556,7 @@ export class BacktestResultsController {
       // 获取交易明细
       let trades: TradeData[] = [];
       try {
-        trades = await this.backtestResultService.getTradeData(taskId, undefined);
+        trades = await this.backtestResultService.getTradesData(taskId, undefined);
       } catch (err) {
         this.logger.warn(`Failed to load trades for ${taskId}: ${err.message}`);
       }
@@ -578,7 +578,7 @@ export class BacktestResultsController {
         );
         res.json({
           taskId,
-          result: result.metrics,
+          result: result.detailedMetrics || {},
           trades,
           equity,
           exportedAt: new Date().toISOString(),
@@ -624,8 +624,8 @@ export class BacktestResultsController {
     lines.push('## 统计指标');
     lines.push('指标名称,数值');
     
-    const metrics = result.metrics as any;
-    if (metrics) {
+    const metrics = (result.detailedMetrics as any) || {};
+    if (metrics && Object.keys(metrics).length > 0) {
       Object.entries(metrics).forEach(([key, value]) => {
         if (typeof value === 'object' && value !== null) {
           // 嵌套对象
@@ -647,14 +647,14 @@ export class BacktestResultsController {
       
       trades.forEach((trade) => {
         const row = [
-          trade.timestamp || '',
-          trade.symbol || '',
-          trade.side || '',
-          trade.type || '',
-          trade.quantity || 0,
-          trade.price || 0,
-          trade.realizedPnl || 0,
-          trade.fees || 0,
+          (trade as any).timestamp || trade.entry_time || '',
+          (trade as any).symbol || '',
+          (trade as any).side || trade.direction || '',
+          (trade as any).type || '',
+          (trade as any).quantity || trade.size || 0,
+          (trade as any).price || trade.entry_price || 0,
+          (trade as any).realizedPnl || trade.pnl || 0,
+          (trade as any).fees || trade.commission || 0,
         ];
         lines.push(row.map(v => this.escapeCSV(v)).join(','));
       });

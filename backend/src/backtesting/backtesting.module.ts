@@ -12,12 +12,14 @@ import { PythonStrategyValidator } from './strategies/python-strategy.validator'
 import { StrategyScriptCompiler } from './strategies/strategy-script.compiler';
 import { BacktestTasksModule } from './tasks/backtest-tasks.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
+import { ServiceRegistryModule } from './service-registry/service-registry.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([StrategyEntity, ScriptVersionEntity]),
     BacktestTasksModule,
     MonitoringModule,
+    ServiceRegistryModule, // Worker 注册和管理
   ],
   controllers: [BacktestingController, StrategiesController],
   providers: [

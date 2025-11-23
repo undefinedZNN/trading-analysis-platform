@@ -467,8 +467,19 @@ export async function fetchTaskBars(
 export async function executeBacktestTask(
   taskId: string,
 ): Promise<{ message: string; taskId: string }> {
-  // 新API Client可能没有此方法，这里提供一个占位实现
-  throw new Error('executeBacktestTask is not implemented in new API Client');
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api/v1'}/backtesting/tasks/${taskId}/execute`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: '执行任务失败' }));
+    throw new Error(error.message || `执行任务失败: ${response.statusText}`);
+  }
+
+  return await response.json();
 }
 
 // ============================================

@@ -152,9 +152,19 @@ export class BacktestTasksService {
       queryBuilder.andWhere('task.created_at <= :createdBefore', { createdBefore: new Date(createdBefore) });
     }
 
+    // 排序字段映射（camelCase -> snake_case）
+    const sortFieldMap: Record<string, string> = {
+      'createdAt': 'created_at',
+      'startedAt': 'started_at',
+      'completedAt': 'completed_at',
+      'taskName': 'task_name',
+      'updatedAt': 'updated_at',
+    };
+    
     // 排序
+    const dbSortField = sortFieldMap[sortBy] || 'created_at';
     const orderDirection = sortOrder.toUpperCase() as 'ASC' | 'DESC';
-    queryBuilder.orderBy(`task.${sortBy}`, orderDirection);
+    queryBuilder.orderBy(`task.${dbSortField}`, orderDirection);
 
     // 分页
     const skip = (page - 1) * pageSize;
@@ -1056,8 +1066,8 @@ export class BacktestTasksService {
       createdAt: task.createdAt,
       startedAt: task.startedAt,
       completedAt: task.completedAt,
-      strategyId: task.strategy?.strategyId,
-      strategyName: task.strategy?.strategyName,
+      strategyId: task.strategyId,
+      strategyName: null, // 策略名称需要从关联表中查询
       metricsSnapshot: task.metricsSnapshot,
     }));
   }

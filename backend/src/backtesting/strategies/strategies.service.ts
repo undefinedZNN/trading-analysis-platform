@@ -119,7 +119,10 @@ export class StrategiesService {
 
   async listStrategyTags() {
     const rows: Array<{ tag: string | null }> = await this.strategyRepository.query(
-      `SELECT DISTINCT UNNEST(tags) AS tag FROM strategies WHERE cardinality(tags) > 0 ORDER BY tag ASC`,
+      `SELECT DISTINCT jsonb_array_elements_text(tags) AS tag 
+       FROM strategies 
+       WHERE jsonb_array_length(tags) > 0 
+       ORDER BY tag ASC`,
     );
     const tags = rows
       .map((row) => (row?.tag ?? '').trim())
@@ -469,20 +472,20 @@ export class StrategiesService {
       throw new BadRequestException('脚本代码不能为空');
     }
 
+    // 验证 Python 策略代码
     await this.ensureScriptValid(dto.code);
-    const schemas = this.scriptParser.parse(dto.code);
-    const compiled = this.scriptCompiler.compile(dto.code);
-    const compiledAt = new Date();
-
+    
+    // 对于 Python 策略，不需要编译和解析参数/因子
+    // TypeScript 解析器和编译器不适用于 Python 代码
     const version = this.scriptVersionRepository.create({
       strategyId,
       versionName: dto.versionName ?? generateVersionName(),
       isMaster,
       code: dto.code,
-      compiledCode: compiled.compiledCode,
-      compiledAt,
-      parameterSchema: schemas.parameters,
-      factorSchema: schemas.factors,
+      compiledCode: dto.code, // Python 代码无需编译，直接存储
+      compiledAt: new Date(),
+      parameterSchema: [],    // Python 策略的参数通过 params 定义，暂存空数组
+      factorSchema: [],       // Python 策略暂不支持因子收集，存空数组
       remark: dto.remark ?? null,
       createdBy: dto.createdBy ?? null,
       updatedBy: dto.updatedBy ?? dto.createdBy ?? null,

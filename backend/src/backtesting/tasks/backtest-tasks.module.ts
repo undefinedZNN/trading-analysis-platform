@@ -12,7 +12,7 @@ import { TaskExecutorService } from './task-executor.service';
 import { BacktestTasksController } from './backtest-tasks.controller';
 import { StrategiesService } from '../strategies/strategies.service';
 import { StrategyScriptParser } from '../strategies/strategy-script.parser';
-import { StrategyScriptValidator } from '../strategies/strategy-script.validator';
+import { PythonStrategyValidator } from '../strategies/python-strategy.validator';
 import { StrategyScriptCompiler } from '../strategies/strategy-script.compiler';
 import { StrategyEntity } from '../entities/strategy.entity';
 import { ScriptVersionEntity } from '../entities/script-version.entity';
@@ -70,7 +70,7 @@ import { BacktestResultsController } from './controllers';
     // 策略相关服务
     StrategiesService,
     StrategyScriptParser,
-    StrategyScriptValidator,
+    PythonStrategyValidator,
     StrategyScriptCompiler,
   ],
   exports: [
