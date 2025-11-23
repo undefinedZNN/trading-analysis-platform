@@ -21,10 +21,12 @@ import {
   type BacktestTask,
   BacktestTaskStatus,
   cancelBacktestTask,
+  pauseBacktestTask,
+  resumeBacktestTask,
   retryBacktestTask,
   deleteBacktestTask,
   executeBacktestTask,
-} from '../../../shared/api/backtestTasks';
+} from '../../../api/tasks-adapter';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -88,6 +90,12 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
           icon: <StopOutlined />,
           text: '已取消',
         };
+      case 'paused' as BacktestTaskStatus:
+        return {
+          color: 'purple',
+          icon: <PauseOutlined />,
+          text: '已暂停',
+        };
       default:
         return {
           color: 'default',
@@ -98,18 +106,50 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
   };
 
   /**
-   * 取消任务
+   * 暂停任务
    */
   const handlePause = async () => {
     try {
       logEvent('请求暂停任务', { taskId: task.taskId });
-      await cancelBacktestTask(task.taskId);
+      await pauseBacktestTask(task.taskId);
       message.success('任务已暂停');
       logEvent('任务暂停成功', { taskId: task.taskId });
       onUpdate?.();
     } catch (error: any) {
       console.error('[BacktestTaskCard] 暂停任务失败', error);
       message.error('暂停任务失败: ' + error.message);
+    }
+  };
+
+  /**
+   * 恢复任务
+   */
+  const handleResume = async () => {
+    try {
+      logEvent('请求恢复任务', { taskId: task.taskId });
+      await resumeBacktestTask(task.taskId);
+      message.success('任务已恢复');
+      logEvent('任务恢复成功', { taskId: task.taskId });
+      onUpdate?.();
+    } catch (error: any) {
+      console.error('[BacktestTaskCard] 恢复任务失败', error);
+      message.error('恢复任务失败: ' + error.message);
+    }
+  };
+
+  /**
+   * 取消任务
+   */
+  const handleCancel = async () => {
+    try {
+      logEvent('请求取消任务', { taskId: task.taskId });
+      await cancelBacktestTask(task.taskId);
+      message.success('任务已取消');
+      logEvent('任务取消成功', { taskId: task.taskId });
+      onUpdate?.();
+    } catch (error: any) {
+      console.error('[BacktestTaskCard] 取消任务失败', error);
+      message.error('取消任务失败: ' + error.message);
     }
   };
 
@@ -372,23 +412,55 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
         )}
 
         {task.status === BacktestTaskStatus.RUNNING && (
-          <Popconfirm
-            title="确定要暂停该任务吗？"
-            description="暂停后任务将停止执行"
-            onConfirm={handlePause}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Tooltip title="暂停任务">
-              <Button
-                size="small"
-                danger
-                icon={<PauseOutlined />}
-              >
-                暂停
-              </Button>
-            </Tooltip>
-          </Popconfirm>
+          <>
+            <Popconfirm
+              title="确定要暂停该任务吗？"
+              description="暂停后任务将停止执行"
+              onConfirm={handlePause}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Tooltip title="暂停任务">
+                <Button
+                  size="small"
+                  icon={<PauseOutlined />}
+                >
+                  暂停
+                </Button>
+              </Tooltip>
+            </Popconfirm>
+            <Popconfirm
+              title="确定要取消该任务吗？"
+              description="取消后任务将无法恢复"
+              onConfirm={handleCancel}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Tooltip title="取消任务">
+                <Button
+                  size="small"
+                  danger
+                  icon={<StopOutlined />}
+                >
+                  取消
+                </Button>
+              </Tooltip>
+            </Popconfirm>
+          </>
+        )}
+
+        {task.status === 'paused' && (
+          <Tooltip title="恢复任务">
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              icon={<CaretRightOutlined />}
+              onClick={handleResume}
+            >
+              恢复
+            </Button>
+          </Tooltip>
         )}
 
         {task.status === BacktestTaskStatus.FAILED && (

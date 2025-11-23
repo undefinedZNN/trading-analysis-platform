@@ -11,5 +11,5 @@ export { TaskLogsTab } from './TaskLogsTab';
 export { TaskResultsTab } from './TaskResultsTab';
 export { BacktestChartsCard } from './BacktestChartsCard';
 export { TaskTradesTab } from './TaskTradesTab';
+export { TaskStatisticsCards } from './TaskStatisticsCards';
 export { default as SchemaPreview } from './SchemaPreview';
-

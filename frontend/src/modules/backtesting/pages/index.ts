@@ -4,4 +4,6 @@
 export { default as StrategyManagementLandingPage } from './StrategyManagementLandingPage';
 export { BacktestTaskListPage } from './BacktestTaskListPage';
 export { TaskDetailPage } from './TaskDetailPage';
+export { DashboardPage } from './DashboardPage';
+export { WorkerManagementPage } from './WorkerManagementPage';
 

@@ -8,6 +8,7 @@ import { StrategiesController } from './strategies/strategies.controller';
 import { StrategiesService } from './strategies/strategies.service';
 import { StrategyScriptParser } from './strategies/strategy-script.parser';
 import { StrategyScriptValidator } from './strategies/strategy-script.validator';
+import { PythonStrategyValidator } from './strategies/python-strategy.validator';
 import { StrategyScriptCompiler } from './strategies/strategy-script.compiler';
 import { BacktestTasksModule } from './tasks/backtest-tasks.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
@@ -24,6 +25,7 @@ import { MonitoringModule } from './monitoring/monitoring.module';
     StrategiesService,
     StrategyScriptParser,
     StrategyScriptValidator,
+    PythonStrategyValidator,
     StrategyScriptCompiler,
   ],
   exports: [

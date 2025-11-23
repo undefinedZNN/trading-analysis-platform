@@ -165,6 +165,18 @@ export class CreateBacktestResultDto {
   minHoldingBars?: number;
 
   // ============================================
+  // 文件路径
+  // ============================================
+
+  @IsOptional()
+  @IsString()
+  tradesFilePath?: string;
+
+  @IsOptional()
+  @IsString()
+  equityFilePath?: string;
+
+  // ============================================
   // 扩展数据
   // ============================================
 

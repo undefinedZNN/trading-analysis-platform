@@ -35,6 +35,7 @@ import {
   createStrategyVersion,
   updateStrategyVersion,
   fetchStrategyVersionDiff,
+  validateStrategyScript,
 } from '../../../shared/api/backtesting';
 import type {
   BacktestingHealth,
@@ -50,201 +51,146 @@ const { Title, Paragraph, Text } = Typography;
 
 const DATE_FORMAT = 'YYYY-MM-DD HH:mm';
 type StrategyVersionDiff = VersionDiffResponse;
-const DEFAULT_SCRIPT_TEMPLATE = `/**
- * 三连K动量策略 (Three Line Momentum Strategy)
- *
- * 策略逻辑:
- * - 监测最近 N 根K线（默认 3 根），当连续 N 根收阳时在最后一根收盘价开多
- * - 止损位设置在序列第一根K线的最低价，可选加缓冲 stopBufferPercent
- * - 止盈设置为 1R（或指定倍数），即入场价 + (入场价 - 止损) * takeProfitMultiple
- *
- * 相比双均线策略，该策略在短线动量行情中可获得更多入场机会。
- */
+const DEFAULT_SCRIPT_TEMPLATE = `"""
+双均线交叉策略 (MA Cross Strategy)
 
-import { defineStrategy } from '@platform/backtesting-sdk';
+策略逻辑:
+- 当快速均线上穿慢速均线时，买入
+- 当快速均线下穿慢速均线时，卖出
+- 使用 95% 的可用资金进行交易
 
-interface StrategyParams {
-  consecutiveBars: number;
-  takeProfitMultiple: number;
-  positionSize: number;
-  stopBufferPercent: number;
-}
+参数:
+- sma_fast_period: 快速均线周期（默认 10）
+- sma_slow_period: 慢速均线周期（默认 30）
 
-type CandleDirection = 'bullish' | 'bearish' | 'neutral';
+本策略基于 Backtrader 框架，提供统一的因子收集和日志记录接口。
+"""
 
-interface CandleSnapshot {
-  timestamp: string;
-  direction: CandleDirection;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-}
+import backtrader as bt
+from typing import Dict, Any
 
-interface ActiveTrade {
-  entryPrice: number;
-  stopPrice: number;
-  targetPrice: number;
-}
 
-interface StrategyState {
-  position: 'none' | 'long';
-  recentBars: CandleSnapshot[];
-  activeTrade: ActiveTrade | null;
-}
+class MyStrategy(bt.Strategy):
+    """
+    自定义策略类
+    
+    继承自 Backtrader 的 Strategy 基类，实现交易逻辑。
+    """
+    
+    # 定义策略参数
+    params = (
+        ('sma_fast_period', 10),   # 快速均线周期
+        ('sma_slow_period', 30),   # 慢速均线周期
+        ('printlog', True),        # 是否打印日志
+    )
+    
+    def __init__(self):
+        """初始化策略"""
+        # 订单管理
+        self.order = None
+        
+        # 计算快速均线
+        self.sma_fast = bt.indicators.SimpleMovingAverage(
+            self.data.close,
+            period=self.p.sma_fast_period
+        )
+        
+        # 计算慢速均线
+        self.sma_slow = bt.indicators.SimpleMovingAverage(
+            self.data.close,
+            period=self.p.sma_slow_period
+        )
+        
+        # 计算交叉信号
+        self.crossover = bt.indicators.CrossOver(self.sma_fast, self.sma_slow)
+        
+        print(f"策略初始化完成: 快线={self.p.sma_fast_period}, 慢线={self.p.sma_slow_period}")
+    
+    def log(self, txt: str, dt=None):
+        """记录日志"""
+        if self.p.printlog:
+            dt = dt or self.datas[0].datetime.date(0)
+            print(f'{dt.isoformat()} {txt}')
+    
+    def notify_order(self, order):
+        """订单状态通知"""
+        if order.status in [order.Submitted, order.Accepted]:
+            # 订单已提交/已接受 - 无需处理
+            return
+        
+        if order.status in [order.Completed]:
+            if order.isbuy():
+                self.log(f'买入成交: 价格={order.executed.price:.2f}, '
+                        f'数量={order.executed.size:.0f}, '
+                        f'手续费={order.executed.comm:.2f}')
+            elif order.issell():
+                self.log(f'卖出成交: 价格={order.executed.price:.2f}, '
+                        f'数量={order.executed.size:.0f}, '
+                        f'手续费={order.executed.comm:.2f}')
+            
+        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
+            self.log('订单被取消/保证金不足/被拒绝')
+        
+        # 重置订单
+        self.order = None
+    
+    def notify_trade(self, trade):
+        """交易通知"""
+        if not trade.isclosed:
+            return
+        
+        self.log(f'交易盈亏: 毛利={trade.pnl:.2f}, 净利={trade.pnlcomm:.2f}')
+    
+    def next(self):
+        """
+        策略逻辑（每根 K 线调用一次）
+        
+        这是策略的核心方法，在每根新的 K 线到来时被调用。
+        """
+        # 记录当前收盘价
+        self.log(f'收盘价: {self.data.close[0]:.2f}')
+        
+        # 跳过数据不足的情况
+        if len(self.data) < self.p.sma_slow_period:
+            return
+        
+        # 如果有未完成的订单，等待
+        if self.order:
+            return
+        
+        # 检查是否持仓
+        if not self.position:
+            # 无持仓，检查买入信号
+            if self.crossover > 0:  # 快线上穿慢线
+                # 计算可用资金的 95% 作为买入金额
+                cash = self.broker.getcash()
+                size = int((cash * 0.95) / self.data.close[0])
+                
+                if size > 0:
+                    self.log(f'买入信号: 价格={self.data.close[0]:.2f}, '
+                            f'快线={self.sma_fast[0]:.2f}, '
+                            f'慢线={self.sma_slow[0]:.2f}, '
+                            f'数量={size}')
+                    # 执行买入
+                    self.order = self.buy(size=size)
+        
+        else:
+            # 有持仓，检查卖出信号
+            if self.crossover < 0:  # 快线下穿慢线
+                self.log(f'卖出信号: 价格={self.data.close[0]:.2f}, '
+                        f'快线={self.sma_fast[0]:.2f}, '
+                        f'慢线={self.sma_slow[0]:.2f}, '
+                        f'持仓={self.position.size}')
+                # 执行卖出（全部持仓）
+                self.order = self.sell(size=self.position.size)
+    
+    def stop(self):
+        """策略结束时调用"""
+        self.log(f'策略结束: 最终资产={self.broker.getvalue():.2f}')
 
-export default defineStrategy({
-  parameters: [
-    {
-      id: 'consecutiveBars',
-      label: '连续阳线数量',
-      type: 'integer',
-      defaultValue: 3,
-      required: true,
-      validator: {
-        min: 2,
-        max: 6,
-      },
-    },
-    {
-      id: 'takeProfitMultiple',
-      label: '止盈倍数 (R)',
-      type: 'number',
-      defaultValue: 1,
-      required: true,
-      validator: {
-        min: 0.5,
-        max: 3,
-      },
-    },
-    {
-      id: 'positionSize',
-      label: '仓位占比',
-      type: 'number',
-      defaultValue: 0.5,
-      required: true,
-      validator: {
-        min: 0.1,
-        max: 1,
-      },
-    },
-    {
-      id: 'stopBufferPercent',
-      label: '止损缓冲 (%)',
-      type: 'number',
-      defaultValue: 0,
-      required: true,
-      validator: {
-        min: 0,
-        max: 0.02,
-      },
-    },
-  ],
 
-  factors: [],
-
-  run(ctx: any): void {
-    const params = ctx.getParameters() as StrategyParams;
-    const required = Math.max(2, Math.floor(params.consecutiveBars ?? 3));
-
-    let state: StrategyState = ctx.getState() || {
-      position: 'none',
-      recentBars: [],
-      activeTrade: null,
-    };
-
-    const bar = ctx.getCurrentBar();
-    if (!bar) return;
-
-    const open = parseFloat(bar.open);
-    const high = parseFloat(bar.high);
-    const low = parseFloat(bar.low);
-    const close = parseFloat(bar.close);
-    if ([open, high, low, close].some((value) => !Number.isFinite(value))) {
-      return;
-    }
-
-    const direction: CandleDirection = close > open ? 'bullish' : close < open ? 'bearish' : 'neutral';
-    state.recentBars.push({ timestamp: bar.timestamp, direction, open, high, low, close });
-    const limit = Math.max(5, required + 2);
-    while (state.recentBars.length > limit) {
-      state.recentBars.shift();
-    }
-
-    if (state.activeTrade) {
-      const stopHit = low <= state.activeTrade.stopPrice;
-      const targetHit = high >= state.activeTrade.targetPrice;
-      if (stopHit || targetHit) {
-        const exitReason = stopHit ? 'stop_loss' : 'take_profit';
-        const priceRef = stopHit ? state.activeTrade.stopPrice : state.activeTrade.targetPrice;
-        ctx.log(
-          stopHit ? 'warn' : 'info',
-          \`Three Line Momentum exit @ \${priceRef.toFixed(2)} (\${exitReason})\`,
-        );
-        ctx.submitOrder({
-          type: 'market',
-          side: 'sell',
-          quantity: 'all',
-          reason: exitReason,
-        });
-        state.position = 'none';
-        state.activeTrade = null;
-      }
-    }
-
-    if (state.position === 'none' && state.recentBars.length >= required) {
-      const sequence = state.recentBars.slice(-required);
-      const bullish = sequence.every((item) => item.direction === 'bullish');
-      if (bullish) {
-        const firstBar = sequence[0];
-        const entryPrice = close;
-        const bufferPercent = Math.max(0, params.stopBufferPercent ?? 0);
-        const bufferedStop = firstBar.low - entryPrice * bufferPercent;
-        const stopPrice = Math.max(0, bufferedStop > 0 ? bufferedStop : firstBar.low);
-        const riskPerUnit = entryPrice - stopPrice;
-        if (riskPerUnit > 0) {
-          const targetPrice = entryPrice + riskPerUnit * (params.takeProfitMultiple ?? 1);
-          const equity = ctx.getEquity();
-          const positionFraction = Math.min(Math.max(params.positionSize ?? 0.5, 0.1), 1);
-          const positionValue = equity * positionFraction;
-          const quantity = positionValue / entryPrice;
-
-          if (quantity > 0 && Number.isFinite(quantity)) {
-            ctx.log(
-              'info',
-              \`Three Line Momentum entry @ \${entryPrice.toFixed(2)} (stop: \${stopPrice.toFixed(
-                2,
-              )}, target: \${targetPrice.toFixed(2)})\`,
-            );
-            ctx.submitOrder({
-              type: 'market',
-              side: 'buy',
-              quantity: quantity.toFixed(8),
-              reason: 'three_line_momentum_entry',
-            });
-
-            state.position = 'long';
-            state.activeTrade = {
-              entryPrice,
-              stopPrice,
-              targetPrice,
-            };
-          }
-        }
-      }
-    }
-
-    ctx.recordMetrics({
-      direction,
-      position: state.position,
-      entryPrice: state.activeTrade?.entryPrice ?? null,
-      stopPrice: state.activeTrade?.stopPrice ?? null,
-      targetPrice: state.activeTrade?.targetPrice ?? null,
-    });
-
-    ctx.setState(state);
-  },
-});
+# 策略导出（必需）
+Strategy = MyStrategy
 `;
 
 const normalizeSchemaFields = (value: unknown): SchemaField[] =>
@@ -1417,7 +1363,7 @@ function StrategyManagementLandingPage() {
               >
                 <Editor
                   height="320px"
-                  language="typescript"
+                  language="python"
                   value={createForm.getFieldValue('code') ?? ''}
                   onChange={(value) =>
                     createForm.setFieldsValue({ code: value ?? '' })
@@ -1427,6 +1373,72 @@ function StrategyManagementLandingPage() {
                     fontSize: 13,
                   }}
                 />
+              </Form.Item>
+              
+              {/* 验证按钮 */}
+              <Form.Item>
+                <Button
+                  type="dashed"
+                  icon={<CheckCircleOutlined />}
+                  onClick={async () => {
+                    const code = createForm.getFieldValue('code');
+                    if (!code) {
+                      message.warning('请先输入策略脚本');
+                      return;
+                    }
+                    
+                    try {
+                      message.loading({ content: '正在验证脚本...', key: 'validate' });
+                      const result = await validateStrategyScript(code);
+                      
+                      if (result.valid) {
+                        message.success({ 
+                          content: '脚本验证通过！', 
+                          key: 'validate', 
+                          duration: 2 
+                        });
+                      } else {
+                        Modal.error({
+                          title: '脚本验证失败',
+                          content: (
+                            <div>
+                              {result.errors.map((err, i) => (
+                                <div key={i} style={{ color: '#ff4d4f', marginBottom: 4 }}>
+                                  • {err}
+                                </div>
+                              ))}
+                              {result.warnings.length > 0 && (
+                                <>
+                                  <div style={{ marginTop: 12, fontWeight: 'bold' }}>警告：</div>
+                                  {result.warnings.map((warn, i) => (
+                                    <div key={i} style={{ color: '#faad14', marginBottom: 4 }}>
+                                      • {warn}
+                                    </div>
+                                  ))}
+                                </>
+                              )}
+                            </div>
+                          ),
+                          width: 500,
+                        });
+                        message.error({ 
+                          content: '脚本验证失败，请检查错误信息', 
+                          key: 'validate', 
+                          duration: 3 
+                        });
+                      }
+                    } catch (err: any) {
+                      message.error({ 
+                        content: `验证失败: ${err.message}`, 
+                        key: 'validate', 
+                        duration: 3 
+                      });
+                    }
+                  }}
+                  style={{ width: '100%' }}
+                >
+                  验证脚本（检查语法和结构）
+                </Button>
               </Form.Item>
             </>
           ) : (
@@ -1485,7 +1497,7 @@ function StrategyManagementLandingPage() {
           <Form.Item label="脚本代码">
             <Editor
               height="320px"
-              language="typescript"
+              language="python"
               value={versionCode}
               onChange={(value) => setVersionCode(value ?? '')}
               options={{
@@ -1493,6 +1505,71 @@ function StrategyManagementLandingPage() {
                 fontSize: 13,
               }}
             />
+          </Form.Item>
+          
+          {/* 验证按钮 */}
+          <Form.Item>
+            <Button
+              type="dashed"
+              icon={<CheckCircleOutlined />}
+              onClick={async () => {
+                if (!versionCode) {
+                  message.warning('请先输入策略脚本');
+                  return;
+                }
+                
+                try {
+                  message.loading({ content: '正在验证脚本...', key: 'validate' });
+                  const result = await validateStrategyScript(versionCode);
+                  
+                  if (result.valid) {
+                    message.success({ 
+                      content: '脚本验证通过！', 
+                      key: 'validate', 
+                      duration: 2 
+                    });
+                  } else {
+                    Modal.error({
+                      title: '脚本验证失败',
+                      content: (
+                        <div>
+                          {result.errors.map((err, i) => (
+                            <div key={i} style={{ color: '#ff4d4f', marginBottom: 4 }}>
+                              • {err}
+                            </div>
+                          ))}
+                          {result.warnings.length > 0 && (
+                            <>
+                              <div style={{ marginTop: 12, fontWeight: 'bold' }}>警告：</div>
+                              {result.warnings.map((warn, i) => (
+                                <div key={i} style={{ color: '#faad14', marginBottom: 4 }}>
+                                  • {warn}
+                                </div>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      ),
+                      width: 500,
+                    });
+                    message.error({ 
+                      content: '脚本验证失败，请检查错误信息', 
+                      key: 'validate', 
+                      duration: 3 
+                    });
+                  }
+                } catch (err: any) {
+                  message.error({ 
+                    content: `验证失败: ${err.message}`, 
+                    key: 'validate', 
+                    duration: 3 
+                  });
+                }
+              }}
+              style={{ width: '100%' }}
+            >
+              验证脚本（检查语法和结构）
+            </Button>
           </Form.Item>
         </Form>
       </Modal>

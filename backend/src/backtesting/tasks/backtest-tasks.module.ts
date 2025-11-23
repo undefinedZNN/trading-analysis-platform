@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule } from '@nestjs/config';
 import {
   BacktestTaskEntity,
   TaskLogEntity,
@@ -19,6 +20,14 @@ import { TradingDataModule } from '../../trading-data/trading-data.module';
 import { WorkerClientModule } from '../worker-client/worker-client.module';
 import { ServiceRegistryModule } from '../service-registry/service-registry.module';
 import { BacktestResultRepository } from './repositories';
+import {
+  ParquetStorageService,
+  BacktestAnalysisService,
+  BacktestResultService,
+} from './services';
+// TODO: RabbitMQ消费者待实现
+// import { BacktestResultConsumer } from './consumers';
+import { BacktestResultsController } from './controllers';
 
 /**
  * 回测任务管理模块
@@ -27,6 +36,7 @@ import { BacktestResultRepository } from './repositories';
  */
 @Module({
   imports: [
+    ConfigModule, // 添加 ConfigModule 以提供 ConfigService
     TypeOrmModule.forFeature([
       BacktestTaskEntity,
       TaskLogEntity,
@@ -38,12 +48,26 @@ import { BacktestResultRepository } from './repositories';
     WorkerClientModule,
     ServiceRegistryModule,
   ],
-  controllers: [BacktestTasksController],
+  controllers: [
+    BacktestTasksController,
+    BacktestResultsController, // Day 5 新增
+  ],
   providers: [
+    // 任务相关服务
     BacktestTasksService,
     TaskLogsService,
     TaskExecutorService,
-    BacktestResultRepository, // 新增
+    
+    // 结果相关服务（Day 2-3 新增）
+    BacktestResultRepository,
+    ParquetStorageService,
+    BacktestAnalysisService,
+    BacktestResultService,
+    
+    // 消息消费者（Day 4 新增） - 待实现RabbitMQ
+    // BacktestResultConsumer,
+    
+    // 策略相关服务
     StrategiesService,
     StrategyScriptParser,
     StrategyScriptValidator,
@@ -53,7 +77,8 @@ import { BacktestResultRepository } from './repositories';
     BacktestTasksService,
     TaskLogsService,
     TaskExecutorService,
-    BacktestResultRepository, // 新增，供其他模块使用
+    BacktestResultRepository,
+    BacktestResultService, // 导出供其他模块使用
   ],
 })
 export class BacktestTasksModule {}

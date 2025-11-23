@@ -17,6 +17,9 @@ import {
   RocketOutlined,
   ReloadOutlined,
   ArrowLeftOutlined,
+  DownloadOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -25,6 +28,11 @@ import {
   type BacktestTask,
   BacktestTaskStatus,
 } from '../../../shared/api/backtestTasks';
+import {
+  downloadTaskResults,
+  pauseTask,
+  resumeTask,
+} from '../../../shared/api/backtesting';
 import { TaskOverviewTab } from '../components/TaskOverviewTab';
 import { TaskLogsTab } from '../components/TaskLogsTab';
 import { TaskResultsTab } from '../components/TaskResultsTab';
@@ -108,10 +116,11 @@ export const TaskDetailPage: React.FC = () => {
   /**
    * 获取状态标签配置
    */
-  const getStatusTag = (status: BacktestTaskStatus) => {
-    const statusMap = {
+  const getStatusTag = (status: BacktestTaskStatus | string) => {
+    const statusMap: Record<string, { color: string; text: string }> = {
       [BacktestTaskStatus.PENDING]: { color: 'default', text: '待执行' },
       [BacktestTaskStatus.RUNNING]: { color: 'processing', text: '执行中' },
+      paused: { color: 'warning', text: '已暂停' },
       [BacktestTaskStatus.COMPLETED]: { color: 'success', text: '已完成' },
       [BacktestTaskStatus.FAILED]: { color: 'error', text: '失败' },
       [BacktestTaskStatus.CANCELLED]: { color: 'warning', text: '已取消' },
@@ -134,6 +143,65 @@ export const TaskDetailPage: React.FC = () => {
    */
   const handleRefresh = () => {
     loadTask();
+  };
+
+  /**
+   * 导出结果
+   */
+  const handleExport = async (format: 'csv' | 'json') => {
+    if (!taskId) return;
+
+    try {
+      message.loading({ content: `正在导出${format.toUpperCase()}...`, key: 'export' });
+      await downloadTaskResults(taskId, format);
+      message.success({ content: '导出成功！', key: 'export', duration: 2 });
+    } catch (err: any) {
+      message.error({ 
+        content: `导出失败: ${err.message}`, 
+        key: 'export', 
+        duration: 3 
+      });
+    }
+  };
+
+  /**
+   * 暂停任务
+   */
+  const handlePause = async () => {
+    if (!taskId) return;
+
+    try {
+      message.loading({ content: '正在暂停任务...', key: 'pause' });
+      await pauseTask(taskId);
+      message.success({ content: '任务已暂停', key: 'pause', duration: 2 });
+      loadTask(); // 刷新状态
+    } catch (err: any) {
+      message.error({ 
+        content: `暂停失败: ${err.message}`, 
+        key: 'pause', 
+        duration: 3 
+      });
+    }
+  };
+
+  /**
+   * 恢复任务
+   */
+  const handleResume = async () => {
+    if (!taskId) return;
+
+    try {
+      message.loading({ content: '正在恢复任务...', key: 'resume' });
+      await resumeTask(taskId);
+      message.success({ content: '任务已恢复', key: 'resume', duration: 2 });
+      loadTask(); // 刷新状态
+    } catch (err: any) {
+      message.error({ 
+        content: `恢复失败: ${err.message}`, 
+        key: 'resume', 
+        duration: 3 
+      });
+    }
   };
 
   // 渲染加载状态
@@ -235,6 +303,45 @@ export const TaskDetailPage: React.FC = () => {
             </div>
 
             <Space>
+              {/* 导出按钮 - 只在已完成时显示 */}
+              {task.status === BacktestTaskStatus.COMPLETED && (
+                <Button.Group>
+                  <Button
+                    icon={<DownloadOutlined />}
+                    onClick={() => handleExport('csv')}
+                  >
+                    导出CSV
+                  </Button>
+                  <Button
+                    onClick={() => handleExport('json')}
+                  >
+                    导出JSON
+                  </Button>
+                </Button.Group>
+              )}
+
+              {/* 暂停按钮 - 只在运行中时显示 */}
+              {task.status === BacktestTaskStatus.RUNNING && (
+                <Button
+                  icon={<PauseCircleOutlined />}
+                  onClick={handlePause}
+                  type="default"
+                >
+                  暂停任务
+                </Button>
+              )}
+
+              {/* 恢复按钮 - 只在暂停时显示 */}
+              {task.status === 'paused' && (
+                <Button
+                  icon={<PlayCircleOutlined />}
+                  onClick={handleResume}
+                  type="primary"
+                >
+                  恢复任务
+                </Button>
+              )}
+
               <Button
                 icon={<ReloadOutlined />}
                 onClick={handleRefresh}

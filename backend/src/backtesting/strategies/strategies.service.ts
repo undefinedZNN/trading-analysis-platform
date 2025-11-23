@@ -18,10 +18,7 @@ import { generateVersionName } from '../utils/version.util';
 import { StrategyScriptParser } from './strategy-script.parser';
 import { diffLines, diffFieldArray } from '../utils/diff.util';
 import { DiffScriptVersionDto } from './dto/diff-script-version.dto';
-import {
-  ScriptValidationMessage,
-  StrategyScriptValidator,
-} from './strategy-script.validator';
+import { PythonStrategyValidator } from './python-strategy.validator';
 import { StrategyScriptCompiler } from './strategy-script.compiler';
 
 const DEFAULT_PAGE = 1;
@@ -35,7 +32,7 @@ export class StrategiesService {
     @InjectRepository(ScriptVersionEntity)
     private readonly scriptVersionRepository: Repository<ScriptVersionEntity>,
     private readonly scriptParser: StrategyScriptParser,
-    private readonly scriptValidator: StrategyScriptValidator,
+    private readonly scriptValidator: PythonStrategyValidator,
     private readonly scriptCompiler: StrategyScriptCompiler,
   ) { }
 
@@ -512,27 +509,9 @@ export class StrategiesService {
 
   private async ensureScriptValid(code: string) {
     const validation = await this.scriptValidator.validate(code);
-    if (validation.errors.length) {
-      throw new BadRequestException(
-        validation.errors.map((item) =>
-          this.formatValidationMessage(item),
-        ),
-      );
+    if (!validation.isValid) {
+      throw new BadRequestException(validation.errors);
     }
-  }
-
-  private formatValidationMessage(message: ScriptValidationMessage) {
-    const prefix =
-      message.type === 'typescript'
-        ? 'TypeScript'
-        : message.ruleId
-          ? `ESLint(${message.ruleId})`
-          : 'ESLint';
-    const location =
-      message.line && message.column
-        ? ` [${message.line}:${message.column}]`
-        : '';
-    return `${prefix}${location}: ${message.message}`;
   }
 
   private async setMasterVersion(

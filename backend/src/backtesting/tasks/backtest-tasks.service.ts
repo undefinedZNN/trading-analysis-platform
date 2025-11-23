@@ -218,6 +218,7 @@ export class BacktestTasksService {
     return updatedTask;
   }
 
+
   /**
    * 更新任务状态
    * 
@@ -356,6 +357,52 @@ export class BacktestTasksService {
     }
 
     return this.updateStatus(taskId, BacktestTaskStatus.CANCELLED);
+  }
+
+  /**
+   * 暂停任务
+   * 
+   * @param taskId 任务ID
+   * @returns 暂停后的任务实体
+   * @throws BadRequestException 如果任务状态不允许暂停
+   */
+  async pause(taskId: string): Promise<BacktestTaskEntity> {
+    const task = await this.findOne(taskId);
+
+    // 只有运行中的任务可以暂停
+    if (task.status !== BacktestTaskStatus.RUNNING) {
+      throw new BadRequestException(
+        `Cannot pause task in ${task.status} status. Only running tasks can be paused.`,
+      );
+    }
+
+    // 更新任务状态为paused
+    task.status = BacktestTaskStatus.PAUSED;
+    const pausedTask = await this.backtestTaskRepository.save(task);
+    
+    this.logger.log(`Backtest task paused: ${taskId}`);
+    return pausedTask;
+  }
+
+  /**
+   * 恢复暂停的任务
+   * 
+   * @param taskId 任务ID
+   * @returns 恢复后的任务实体
+   * @throws BadRequestException 如果任务状态不允许恢复
+   */
+  async resume(taskId: string): Promise<BacktestTaskEntity> {
+    const task = await this.findOne(taskId);
+
+    // 只有暂停的任务可以恢复
+    if (task.status !== BacktestTaskStatus.PAUSED) {
+      throw new BadRequestException(
+        `Cannot resume task in ${task.status} status. Only paused tasks can be resumed.`,
+      );
+    }
+
+    // 恢复任务到运行状态
+    return this.updateStatus(taskId, BacktestTaskStatus.RUNNING);
   }
 
   /**
@@ -847,7 +894,7 @@ export class BacktestTasksService {
       tradesFilePath?: string;
       equityFilePath?: string;
     },
-  ): Promise<void> {
+  ): Promise<BacktestTaskEntity> {
     this.logger.log(`Updating file paths for task: ${taskId}`);
 
     const task = await this.findOne(taskId);
@@ -859,7 +906,7 @@ export class BacktestTasksService {
       task.equityFilePath = data.equityFilePath;
     }
 
-    await this.backtestTaskRepository.save(task);
+    return await this.backtestTaskRepository.save(task);
     
     this.logger.log(
       `File paths updated: trades=${data.tradesFilePath}, equity=${data.equityFilePath}`,
@@ -881,5 +928,236 @@ export class BacktestTasksService {
       .orWhere('task.equityFilePath IS NOT NULL')
       .orderBy('task.completedAt', 'DESC')
       .getMany();
+  }
+
+  // ============================================
+  // 统计相关方法
+  // ============================================
+
+  /**
+   * 获取任务统计信息
+   * 
+   * @returns 统计信息
+   */
+  async getStatistics(): Promise<{
+    total: number;
+    pending: number;
+    running: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    successRate: number;
+    averageExecutionTime: number | null;
+  }> {
+    this.logger.debug('Getting task statistics');
+
+    // 获取各状态的任务数量
+    const [
+      total,
+      pending,
+      running,
+      completed,
+      failed,
+      cancelled,
+    ] = await Promise.all([
+      this.backtestTaskRepository.count(),
+      this.backtestTaskRepository.count({ where: { status: BacktestTaskStatus.PENDING } }),
+      this.backtestTaskRepository.count({ where: { status: BacktestTaskStatus.RUNNING } }),
+      this.backtestTaskRepository.count({ where: { status: BacktestTaskStatus.COMPLETED } }),
+      this.backtestTaskRepository.count({ where: { status: BacktestTaskStatus.FAILED } }),
+      this.backtestTaskRepository.count({ where: { status: BacktestTaskStatus.CANCELLED } }),
+    ]);
+
+    // 计算成功率
+    const finishedTasks = completed + failed;
+    const successRate = finishedTasks > 0 ? completed / finishedTasks : 0;
+
+    // 计算平均执行时间（只统计已完成的任务）
+    let averageExecutionTime: number | null = null;
+    const completedTasks = await this.backtestTaskRepository.find({
+      where: { status: BacktestTaskStatus.COMPLETED },
+      select: ['startedAt', 'completedAt'],
+    });
+
+    if (completedTasks.length > 0) {
+      const totalExecutionTime = completedTasks.reduce((sum, task) => {
+        if (task.startedAt && task.completedAt) {
+          return sum + (task.completedAt.getTime() - task.startedAt.getTime());
+        }
+        return sum;
+      }, 0);
+      averageExecutionTime = totalExecutionTime / completedTasks.length;
+    }
+
+    return {
+      total,
+      pending,
+      running,
+      completed,
+      failed,
+      cancelled,
+      successRate: Math.round(successRate * 10000) / 10000, // 保留4位小数
+      averageExecutionTime,
+    };
+  }
+
+  /**
+   * 获取最近任务列表
+   * 
+   * @param options 查询选项
+   * @returns 最近任务列表
+   */
+  async getRecentTasks(options: {
+    limit?: number;
+    status?: string[];
+    sortBy?: 'createdAt' | 'completedAt';
+  }): Promise<any[]> {
+    const { limit = 10, status, sortBy = 'createdAt' } = options;
+    
+    this.logger.debug(`Getting recent tasks: limit=${limit}, status=${status?.join(',')}, sortBy=${sortBy}`);
+
+    const queryBuilder = this.backtestTaskRepository
+      .createQueryBuilder('task')
+      .leftJoinAndSelect('task.strategy', 'strategy')
+      .select([
+        'task.taskId',
+        'task.taskName',
+        'task.taskDescription',
+        'task.status',
+        'task.progress',
+        'task.createdAt',
+        'task.startedAt',
+        'task.completedAt',
+        'task.metricsSnapshot',
+        'strategy.strategyId',
+        'strategy.strategyName',
+      ]);
+
+    // 状态筛选
+    if (status && status.length > 0) {
+      queryBuilder.andWhere('task.status IN (:...status)', { status });
+    }
+
+    // 排序
+    queryBuilder.orderBy(`task.${sortBy}`, 'DESC');
+
+    // 限制数量
+    queryBuilder.limit(limit);
+
+    const tasks = await queryBuilder.getMany();
+
+    // 格式化返回数据
+    return tasks.map(task => ({
+      taskId: task.taskId,
+      taskName: task.taskName,
+      taskDescription: task.taskDescription,
+      status: task.status,
+      progress: task.progress,
+      createdAt: task.createdAt,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
+      strategyId: task.strategy?.strategyId,
+      strategyName: task.strategy?.strategyName,
+      metricsSnapshot: task.metricsSnapshot,
+    }));
+  }
+
+  /**
+   * 获取任务趋势数据
+   * 
+   * @param options 查询选项
+   * @returns 趋势数据
+   */
+  async getTrend(options: {
+    days?: number;
+    groupBy?: 'day' | 'hour';
+  }): Promise<any[]> {
+    const { days = 7, groupBy = 'day' } = options;
+    
+    this.logger.debug(`Getting task trend: days=${days}, groupBy=${groupBy}`);
+
+    // 计算起始时间
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    startDate.setHours(0, 0, 0, 0);
+
+    // 获取时间范围内的所有任务
+    const tasks = await this.backtestTaskRepository.find({
+      where: {
+        createdAt: Between(startDate, new Date()),
+      },
+      select: ['taskId', 'status', 'createdAt', 'completedAt'],
+      order: {
+        createdAt: 'ASC',
+      },
+    });
+
+    // 按日期分组统计
+    const trendMap = new Map<string, {
+      date: string;
+      total: number;
+      pending: number;
+      running: number;
+      completed: number;
+      failed: number;
+      cancelled: number;
+    }>();
+
+    // 初始化所有日期
+    for (let i = 0; i < days; i++) {
+      const date = new Date(startDate);
+      date.setDate(date.getDate() + i);
+      const dateKey = date.toISOString().split('T')[0];
+      trendMap.set(dateKey, {
+        date: dateKey,
+        total: 0,
+        pending: 0,
+        running: 0,
+        completed: 0,
+        failed: 0,
+        cancelled: 0,
+      });
+    }
+
+    // 统计任务
+    tasks.forEach(task => {
+      const dateKey = task.createdAt.toISOString().split('T')[0];
+      const stats = trendMap.get(dateKey);
+      
+      if (stats) {
+        stats.total++;
+        
+        switch (task.status) {
+          case BacktestTaskStatus.PENDING:
+            stats.pending++;
+            break;
+          case BacktestTaskStatus.RUNNING:
+            stats.running++;
+            break;
+          case BacktestTaskStatus.COMPLETED:
+            stats.completed++;
+            break;
+          case BacktestTaskStatus.FAILED:
+            stats.failed++;
+            break;
+          case BacktestTaskStatus.CANCELLED:
+            stats.cancelled++;
+            break;
+        }
+      }
+    });
+
+    // 转换为数组并计算成功率
+    const trendData = Array.from(trendMap.values()).map(stats => {
+      const finished = stats.completed + stats.failed;
+      const successRate = finished > 0 ? stats.completed / finished : 0;
+      
+      return {
+        ...stats,
+        successRate: Math.round(successRate * 10000) / 10000,
+      };
+    });
+
+    return trendData;
   }
 }

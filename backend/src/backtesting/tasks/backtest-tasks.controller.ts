@@ -36,6 +36,7 @@ import { access } from 'fs/promises';
 import { BacktestTasksService } from './backtest-tasks.service';
 import { TaskLogsService } from './task-logs.service';
 import { TaskExecutorService } from './task-executor.service';
+import { BacktestResultService } from './services/backtest-result.service';
 import {
   CreateBacktestTaskDto,
   UpdateBacktestTaskDto,
@@ -62,6 +63,7 @@ export class BacktestTasksController {
     private readonly backtestTasksService: BacktestTasksService,
     private readonly taskLogsService: TaskLogsService,
     private readonly taskExecutorService: TaskExecutorService,
+    private readonly backtestResultService: BacktestResultService,
   ) {}
 
   private verifyWorkerToken(token?: string) {
@@ -134,6 +136,107 @@ export class BacktestTasksController {
     @Body(ValidationPipe) createDto: CreateBacktestTaskDto,
   ): Promise<BacktestTaskEntity> {
     return await this.backtestTasksService.create(createDto);
+  }
+
+  /**
+   * 获取任务统计信息
+   */
+  @Get('statistics')
+  @ApiOperation({
+    summary: '获取任务统计信息',
+    description: '获取任务的总体统计信息，包括各状态任务数量、成功率等。',
+  })
+  @ApiOkResponse({
+    description: '统计信息',
+    schema: {
+      example: {
+        total: 150,
+        pending: 10,
+        running: 5,
+        completed: 120,
+        failed: 10,
+        cancelled: 5,
+        successRate: 0.92,
+        averageExecutionTime: 3600000,
+      },
+    },
+  })
+  async getStatistics() {
+    return await this.backtestTasksService.getStatistics();
+  }
+
+  /**
+   * 获取最近任务列表
+   */
+  @Get('recent')
+  @ApiOperation({
+    summary: '获取最近任务列表',
+    description: '获取最近创建或完成的任务列表，用于Dashboard展示。',
+  })
+  @ApiQuery({ name: 'limit', required: false, description: '返回数量限制', example: 10 })
+  @ApiQuery({ name: 'status', required: false, description: '状态筛选（可选多个，逗号分隔）', example: 'completed,failed' })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['createdAt', 'completedAt'], description: '排序字段，默认createdAt' })
+  @ApiOkResponse({
+    description: '最近任务列表',
+    schema: {
+      example: [
+        {
+          taskId: '770e8400-e29b-41d4-a716-446655440002',
+          taskName: '双均线策略回测',
+          status: 'completed',
+          createdAt: '2025-11-22T10:30:00Z',
+          completedAt: '2025-11-22T11:30:00Z',
+          strategyName: '双均线策略',
+          metricsSnapshot: { totalReturn: 0.25 },
+        },
+      ],
+    },
+  })
+  async getRecentTasks(
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('sortBy') sortBy?: 'createdAt' | 'completedAt',
+  ) {
+    return await this.backtestTasksService.getRecentTasks({
+      limit: limit ? parseInt(String(limit), 10) : 10,
+      status: status ? status.split(',') : undefined,
+      sortBy: sortBy || 'createdAt',
+    });
+  }
+
+  /**
+   * 获取任务趋势数据
+   */
+  @Get('trend')
+  @ApiOperation({
+    summary: '获取任务趋势数据',
+    description: '获取指定时间范围内的任务统计趋势，用于图表展示。',
+  })
+  @ApiQuery({ name: 'days', required: false, description: '统计天数，默认7天', example: 7 })
+  @ApiQuery({ name: 'groupBy', required: false, enum: ['day', 'hour'], description: '分组方式，默认按天', example: 'day' })
+  @ApiOkResponse({
+    description: '趋势数据',
+    schema: {
+      example: [
+        {
+          date: '2025-11-22',
+          total: 15,
+          completed: 12,
+          failed: 2,
+          cancelled: 1,
+          successRate: 0.86,
+        },
+      ],
+    },
+  })
+  async getTrend(
+    @Query('days') days?: number,
+    @Query('groupBy') groupBy?: 'day' | 'hour',
+  ) {
+    return await this.backtestTasksService.getTrend({
+      days: days ? parseInt(String(days), 10) : 7,
+      groupBy: groupBy || 'day',
+    });
   }
 
   /**
@@ -364,6 +467,102 @@ export class BacktestTasksController {
   }
 
   /**
+   * 更新任务文件路径（Worker 调用）
+   */
+  @Patch(':taskId/file-paths')
+  @ApiOperation({ 
+    summary: '更新任务文件路径',
+    description: 'Worker 在回测完成并保存 Parquet 文件后调用此接口更新任务的文件路径'
+  })
+  @ApiParam({
+    name: 'taskId',
+    description: '任务ID（UUID）',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        tradesFilePath: {
+          type: 'string',
+          description: '交易数据文件路径（相对路径）',
+          example: 'task-123/trades_1234567890.parquet',
+        },
+        equityFilePath: {
+          type: 'string',
+          description: '权益曲线文件路径（相对路径）',
+          example: 'task-123/equity_1234567890.parquet',
+        },
+      },
+      required: ['tradesFilePath', 'equityFilePath'],
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: '文件路径更新成功',
+    type: BacktestTaskEntity,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: '任务不存在',
+  })
+  async updateFilePaths(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Body() body: { tradesFilePath: string; equityFilePath: string },
+  ): Promise<BacktestTaskEntity> {
+    return await this.backtestTasksService.updateFilePaths(taskId, {
+      tradesFilePath: body.tradesFilePath,
+      equityFilePath: body.equityFilePath,
+    });
+  }
+
+  /**
+   * 触发生成主结果（用于测试或手动触发）
+   */
+  @Post(':taskId/generate-primary-result')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '触发生成主结果',
+    description: '手动触发为任务生成主结果。通常由 Worker 通过 RabbitMQ 自动触发，此接口用于测试或手动触发。'
+  })
+  @ApiParam({
+    name: 'taskId',
+    description: '任务ID（UUID）',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @ApiOkResponse({
+    description: '主结果生成成功',
+    schema: {
+      type: 'object',
+      properties: {
+        resultId: {
+          type: 'string',
+          description: '结果ID',
+        },
+        message: {
+          type: 'string',
+          example: 'Primary result generated successfully',
+        },
+      },
+    },
+  })
+  @ApiNotFoundResponse({
+    description: '任务不存在',
+  })
+  async generatePrimaryResult(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+  ): Promise<{ resultId: string; message: string }> {
+    this.logger.log(`Generating primary result for task ${taskId}`);
+    
+    const result = await this.backtestResultService.generatePrimaryResultForTask(taskId);
+    
+    return {
+      resultId: result.resultId,
+      message: 'Primary result generated successfully',
+    };
+  }
+
+  /**
    * 取消任务
    */
   @Post(':taskId/cancel')
@@ -399,6 +598,68 @@ export class BacktestTasksController {
   ): Promise<BacktestTaskEntity> {
     await this.taskExecutorService.cancelTask(taskId);
     return await this.backtestTasksService.cancel(taskId);
+  }
+
+  /**
+   * 暂停任务
+   */
+  @Post(':taskId/pause')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '暂停回测任务',
+    description: '暂停正在运行的任务。暂停的任务可以通过resume接口恢复。',
+  })
+  @ApiParam({
+    name: 'taskId',
+    description: '任务ID（UUID）',
+    example: '770e8400-e29b-41d4-a716-446655440002',
+  })
+  @ApiOkResponse({
+    description: '任务暂停成功',
+    type: BacktestTaskEntity,
+  })
+  @ApiBadRequestResponse({
+    description: '任务状态不允许暂停（只有running状态的任务可以暂停）',
+  })
+  @ApiNotFoundResponse({
+    description: '任务不存在',
+  })
+  async pause(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+  ): Promise<BacktestTaskEntity> {
+    this.logger.log(`暂停任务: ${taskId}`);
+    return await this.backtestTasksService.pause(taskId);
+  }
+
+  /**
+   * 恢复暂停的任务
+   */
+  @Post(':taskId/resume')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '恢复暂停的回测任务',
+    description: '恢复之前暂停的任务，任务将从断点处继续执行。',
+  })
+  @ApiParam({
+    name: 'taskId',
+    description: '任务ID（UUID）',
+    example: '770e8400-e29b-41d4-a716-446655440002',
+  })
+  @ApiOkResponse({
+    description: '任务恢复成功',
+    type: BacktestTaskEntity,
+  })
+  @ApiBadRequestResponse({
+    description: '任务状态不允许恢复（只有paused状态的任务可以恢复）',
+  })
+  @ApiNotFoundResponse({
+    description: '任务不存在',
+  })
+  async resume(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+  ): Promise<BacktestTaskEntity> {
+    this.logger.log(`恢复任务: ${taskId}`);
+    return await this.backtestTasksService.resume(taskId);
   }
 
   /**

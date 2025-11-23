@@ -7,3 +7,5 @@ export * from './list-task-trades.dto';
 export * from './task-bars.dto';
 export * from './create-backtest-result.dto';
 export * from './update-backtest-result.dto';
+export * from './create-filtered-result.dto';
+export * from './result-query.dto';

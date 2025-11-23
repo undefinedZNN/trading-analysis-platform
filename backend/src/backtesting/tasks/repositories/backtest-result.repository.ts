@@ -216,7 +216,7 @@ export class BacktestResultRepository {
     page?: number;
     limit?: number;
   }): Promise<{
-    data: BacktestResultEntity[];
+    results: BacktestResultEntity[];
     total: number;
     page: number;
     pageSize: number;
@@ -253,7 +253,7 @@ export class BacktestResultRepository {
     const orderByField = orderByMap[orderBy] || 'createdAt';
 
     // 执行查询
-    const [data, total] = await this.repository.findAndCount({
+    const [results, total] = await this.repository.findAndCount({
       where,
       order: {
         [orderByField]: order,
@@ -263,7 +263,7 @@ export class BacktestResultRepository {
     });
 
     return {
-      data,
+      results,
       total,
       page,
       pageSize: limit,

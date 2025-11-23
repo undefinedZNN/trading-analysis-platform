@@ -1,11 +1,24 @@
 import { useMemo, useState } from 'react';
-import { OrderedListOutlined, DatabaseOutlined, ExperimentOutlined, RocketOutlined } from '@ant-design/icons';
+import { 
+  OrderedListOutlined, 
+  DatabaseOutlined, 
+  ExperimentOutlined, 
+  RocketOutlined,
+  ApiOutlined,
+  DashboardOutlined,
+} from '@ant-design/icons';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { App as AntdApp } from 'antd';
 import AppLayout from './layouts/AppLayout';
 import ImportListPage from '../modules/trading-data/pages/ImportListPage';
 import DatasetListPage from '../modules/trading-data/pages/DatasetListPage';
-import { StrategyManagementLandingPage, BacktestTaskListPage, TaskDetailPage } from '../modules/backtesting/pages';
+import { 
+  StrategyManagementLandingPage, 
+  BacktestTaskListPage, 
+  TaskDetailPage,
+  DashboardPage,
+  WorkerManagementPage,
+} from '../modules/backtesting/pages';
 
 const menuItems = [
   {
@@ -20,8 +33,10 @@ const menuItems = [
     key: 'backtesting',
     label: '交易回测',
     children: [
+      { key: 'backtesting/dashboard', label: '仪表盘', icon: <DashboardOutlined /> },
       { key: 'backtesting/strategies', label: '策略管理', icon: <ExperimentOutlined /> },
       { key: 'backtesting/tasks', label: '回测任务', icon: <RocketOutlined /> },
+      { key: 'backtesting/workers', label: 'Worker管理', icon: <ApiOutlined /> },
     ],
   },
 ];
@@ -35,6 +50,10 @@ const metaMap: Record<string, { title: string; description?: string }> = {
     title: '数据集列表',
     description: '管理清洗后的数据集，可执行软删除与恢复。',
   },
+  'backtesting/dashboard': {
+    title: '回测仪表盘',
+    description: '查看回测系统整体状况和关键指标。',
+  },
   'backtesting/strategies': {
     title: '策略管理',
     description: '管理回测策略脚本与版本，功能建设中。',
@@ -42,6 +61,10 @@ const metaMap: Record<string, { title: string; description?: string }> = {
   'backtesting/tasks': {
     title: '回测任务',
     description: '创建、管理和监控策略回测任务。',
+  },
+  'backtesting/workers': {
+    title: 'Worker管理',
+    description: '监控和管理回测Worker节点的运行状态。',
   },
 };
 
@@ -87,11 +110,13 @@ function AppShell() {
             path="/trading-data/datasets"
             element={<DatasetListPage key={datasetRefreshCounter} />}
           />
+          <Route path="/backtesting/dashboard" element={<DashboardPage />} />
           <Route path="/backtesting/strategies" element={<StrategyManagementLandingPage />} />
           <Route path="/backtesting/tasks" element={<BacktestTaskListPage />} />
           <Route path="/backtesting/tasks/:taskId" element={<TaskDetailPage />} />
-          <Route path="/" element={<Navigate to="/trading-data/imports" replace />} />
-          <Route path="*" element={<Navigate to="/trading-data/imports" replace />} />
+          <Route path="/backtesting/workers" element={<WorkerManagementPage />} />
+          <Route path="/" element={<Navigate to="/backtesting/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/backtesting/dashboard" replace />} />
         </Routes>
       </AppLayout>
     </AntdApp>

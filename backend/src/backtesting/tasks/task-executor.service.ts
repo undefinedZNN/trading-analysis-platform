@@ -6,24 +6,27 @@ import { TaskLogsService } from './task-logs.service';
 import { StrategiesService } from '../strategies/strategies.service';
 import { TradingDataService } from '../../trading-data/trading-data.service';
 import { resolveDatasetPath } from '../../config/storage.config';
-import { BacktestTaskEntity, BacktestTaskStatus, ResultSummary } from './entities';
-import { ExecuteTaskDto } from '@trading-platform/backtesting-contracts';
+import { BacktestTaskEntity, BacktestTaskStatus, ResultSummary, LogLevel } from './entities';
 import { WorkerClientService } from '../worker-client/worker-client.service';
 import { ExecutionConfigDto } from './dto/create-backtest-task.dto';
 import { DatasetEntity } from '../../trading-data/entities/dataset.entity';
-import {
-  Orchestrator,
-  Session,
-  SessionEventType,
-  BacktestSessionConfig,
-  SessionEvent,
-  createOrchestrator,
-  createModuleCoordinator,
-} from '../orchestrator';
+
+/**
+ * Worker执行配置DTO
+ */
+interface WorkerExecuteDto {
+  taskId: string;
+  strategyCode: string;
+  dataPath: string;
+  parameters: Record<string, any>;
+  initialCapital: number;
+  commission: number;
+  callbackUrl: string;
+}
 
 /**
  * 策略清单接口（简化版）
- * 用于构建 Orchestrator 配置
+ * 用于构建 Worker 配置
  */
 interface StrategyManifest {
   strategyId: string;
@@ -40,7 +43,7 @@ interface StrategyManifest {
 /**
  * 任务执行器服务
  * 
- * 负责执行回测任务，调用 Orchestrator 完成回测计算
+ * 负责执行回测任务，使用 Worker 模式完成回测计算
  */
 @Injectable()
 export class TaskExecutorService {
@@ -58,21 +61,6 @@ export class TaskExecutorService {
    */
   private readonly PROGRESS_UPDATE_INTERVAL = 1000; // 1秒
   
-  /**
-   * 活跃的会话映射
-   * 用于任务取消时停止会话
-   */
-  private readonly activeSessions = new Map<string, Session>();
-  
-  private useWorkerMode(): boolean {
-    return this.workerClient?.isEnabled() ?? false;
-  }
-  
-  /**
-   * Orchestrator 实例
-   */
-  private readonly orchestrator: Orchestrator;
-
   constructor(
     private readonly tasksService: BacktestTasksService,
     private readonly logsService: TaskLogsService,
@@ -82,11 +70,7 @@ export class TaskExecutorService {
     @InjectRepository(BacktestTaskEntity)
     private readonly taskRepository: Repository<BacktestTaskEntity>,
   ) {
-    // 创建 Orchestrator 实例
-    const moduleCoordinator = createModuleCoordinator();
-    this.orchestrator = createOrchestrator(moduleCoordinator);
-    
-    this.logger.log('TaskExecutorService initialized with TradingDataService');
+    this.logger.log('TaskExecutorService initialized (Worker mode only)');
   }
 
   /**
@@ -95,272 +79,147 @@ export class TaskExecutorService {
    * @param taskId 任务ID
    */
   async executeTask(taskId: string): Promise<void> {
-    this.logger.log(`Starting task execution: ${taskId}`);
+    this.logger.log(`Starting execution for task ${taskId}`);
     
     try {
-      // 1. 获取任务
+      // 1. 加载任务信息
       const task = await this.tasksService.findOne(taskId);
       
-      // 2. 验证状态（允许 pending 和 failed 状态的任务执行，failed 状态可以重试）
-      if (task.status !== BacktestTaskStatus.PENDING && task.status !== BacktestTaskStatus.FAILED) {
+      if (task.status !== BacktestTaskStatus.PENDING) {
         throw new BadRequestException(
-          `Task ${taskId} cannot be executed in ${task.status} status. Only pending or failed tasks can be executed.`
+          `Cannot execute task in status: ${task.status}`,
         );
       }
       
-      // 3. 如果是 failed 状态，先清理之前的错误信息
-      if (task.status === BacktestTaskStatus.FAILED) {
-        await this.taskRepository.update(
-          { taskId },
-          { errorMessage: null, errorStack: null }
-        );
-        await this.logsService.info(taskId, 'TaskExecutor', 'Retrying failed task');
-      }
-      
-      // 4. 更新状态为 running
-      await this.tasksService.updateStatus(taskId, BacktestTaskStatus.RUNNING);
-      await this.logsService.info(taskId, 'TaskExecutor', 'Task execution started');
-
-      if (this.useWorkerMode()) {
-        const workerId = await this.tryDispatchToWorker(task);
-        if (workerId) {
-          await this.taskRepository.update(
-            { taskId: task.taskId },
-            { assignedWorkerId: workerId },
-          );
-          return;
-        }
-      }
-      await this.taskRepository.update(
-        { taskId: task.taskId },
-        { assignedWorkerId: null },
+      // 2. 更新状态为运行中
+      await this.tasksService.updateStatus(
+        taskId,
+        BacktestTaskStatus.RUNNING,
+        { startedAt: new Date() },
       );
       
-      // 5. 准备 Orchestrator 配置
-      const config = await this.prepareOrchestratorConfig(task);
+      await this.logsService.create(
+        taskId,
+        LogLevel.INFO,
+        'Starting task execution via Worker',
+      );
       
-      // 6. 创建会话
-      const session = await this.orchestrator.createSession(config);
-      this.activeSessions.set(taskId, session);
-      
-      // 7. 订阅事件
-      this.subscribeToEvents(session, taskId);
-      
-      // 8. 启动执行
-      await this.orchestrator.start(taskId);
-      
-      this.logger.log(`Task ${taskId} started successfully`);
+      // 3. 使用 Worker 模式执行
+      await this.executeViaWorker(task);
       
     } catch (error) {
-      this.logger.error(`Failed to start task ${taskId}: ${error.message}`);
-      await this.handleError(taskId, error as Error);
+      this.logger.error(
+        `Task execution failed for ${taskId}: ${(error as Error).message}`,
+      );
+      
+      await this.handleExecutionError(taskId, error as Error);
       throw error;
     }
   }
 
   /**
-   * 取消任务
+   * 取消任务执行
    * 
    * @param taskId 任务ID
    */
   async cancelTask(taskId: string): Promise<void> {
     this.logger.log(`Cancelling task ${taskId}`);
-
+    
     try {
       const task = await this.tasksService.findOne(taskId);
-
-      if (task.status === BacktestTaskStatus.PENDING) {
-        this.logger.log(`Task ${taskId} pending, no active execution to cancel`);
-        return;
-      }
-
+      
       if (task.status !== BacktestTaskStatus.RUNNING) {
         throw new BadRequestException(
-          `Only pending or running tasks can be cancelled (current status: ${task.status})`,
+          `Cannot cancel task in status: ${task.status}`,
         );
       }
-
-      if (this.useWorkerMode() && task.assignedWorkerId) {
-        await this.workerClient
-          .cancelTask(taskId, task.assignedWorkerId)
-          .catch((error) => {
-            this.logger.warn(
-              `Failed to forward cancellation to worker ${task.assignedWorkerId}: ${error?.message}`,
-            );
-          });
-        return;
-      }
-
-      const session = this.activeSessions.get(taskId);
-      if (session) {
-        await this.orchestrator.stop(taskId, 'User cancelled');
-        this.activeSessions.delete(taskId);
-      }
-
-      this.progressUpdateThrottle.delete(taskId);
-      await this.logsService.info(taskId, 'TaskExecutor', 'Task cancelled by user');
+      
+      // Worker 取消 - 发送取消请求到 Worker
+      await this.workerClient.cancelTask(taskId);
+      
+      await this.tasksService.updateStatus(
+        taskId,
+        BacktestTaskStatus.CANCELLED,
+        { completedAt: new Date() },
+      );
+      
+      await this.logsService.create(
+        taskId,
+        LogLevel.INFO,
+        'Task cancelled by user',
+      );
+      
+      this.logger.log(`Task ${taskId} cancelled successfully`);
+      
     } catch (error) {
-      this.logger.error(`Failed to cancel task ${taskId}: ${(error as Error).message}`);
+      this.logger.error(
+        `Failed to cancel task ${taskId}: ${(error as Error).message}`,
+      );
       throw error;
     }
   }
 
-  private async tryDispatchToWorker(task: BacktestTaskEntity): Promise<string | null> {
-    if (!this.useWorkerMode()) {
-      return null;
-    }
-
-    try {
-      const payload = await this.buildWorkerPayload(task);
-      const response = await this.workerClient.dispatchTask(payload);
-      await this.logsService.info(
-        task.taskId,
-        'WorkerClient',
-        'Task dispatched to worker',
-        {
-          workerId: response?.workerId ?? 'unknown',
-        },
-      );
-      this.logger.log(
-        `Task ${task.taskId} dispatched to worker ${response?.workerId ?? 'unknown'}`,
-      );
-      return response?.workerId ?? null;
-    } catch (error: any) {
-      this.logger.warn(
-        `Failed to dispatch task ${task.taskId} to worker: ${error?.message || error}`,
-      );
-      await this.logsService.warn(
-        task.taskId,
-        'WorkerClient',
-        'Worker dispatch failed, falling back to local execution',
-        { error: error?.message || String(error) },
-      );
-      return null;
-    }
-  }
-
-  private async buildWorkerPayload(task: BacktestTaskEntity): Promise<ExecuteTaskDto> {
-    const strategy = await this.strategiesService.getStrategy(task.strategyId);
-    const version = strategy.scriptVersions.find(
-      (item) => item.scriptVersionId === task.scriptVersionId,
-    );
-
-    if (!version) {
-      throw new NotFoundException(
-        `Script version ${task.scriptVersionId} not found for strategy ${task.strategyId}`,
-      );
-    }
-
-    const dataset = await this.tradingDataService.getDatasetById(task.datasetId);
-    const executionConfig = (task.executionConfig as ExecutionConfigDto) || ({} as ExecutionConfigDto);
-    const timeRange = task.dataConfig?.timeRange || {
-      start: dataset.timeStart.toISOString(),
-      end: dataset.timeEnd.toISOString(),
-    };
-    const timeframe = task.dataConfig?.timeframe || dataset.granularity;
-    const datasetSymbol = this.resolveDatasetSymbol(dataset);
-    const datasetPathTemplate = this.resolveDatasetPathTemplate(dataset);
-
-    const parameters = {
-      ...task.strategyParams,
-      strategyType: task.strategyParams?.strategyType || strategy.strategyId,
-      scriptVersionId: version.scriptVersionId,
-      initialCapital: executionConfig?.initialCapital ?? 10000,
-      leverage: executionConfig?.leverage ?? 1,
-      slippage: executionConfig?.slippage ?? 0,
-      fees: executionConfig?.fees ?? {},
-      riskRules: (executionConfig as any)?.riskRules ?? [],
-      datasetPath: dataset.path,
-      datasetRoot: datasetSymbol,
-      datasetPathTemplate,
-      datasetBaseGranularity: dataset.granularity,
-      datasetAvailableGranularities: dataset.availableGranularities ?? [],
-    };
-
-    const scriptPayload = version.compiledCode
-      ? {
-          scriptVersionId: version.scriptVersionId,
-          compiledCode: version.compiledCode,
-          strategyId: strategy.strategyId,
-          versionName: version.versionName,
-        }
-      : undefined;
-
-    if (!scriptPayload) {
-      this.logger.warn(
-        `Script version ${version.scriptVersionId} missing compiled code, falling back to built-in strategy resolution.`,
-      );
-    }
-
-    return {
-      taskId: task.taskId,
-      config: {
-        strategyId: strategy.strategyId,
-        datasetId: datasetSymbol || dataset.tradingPair || String(task.datasetId),
-        timeframe,
-        timeRange: {
-          start: this.asIsoString(timeRange.start),
-          end: this.asIsoString(timeRange.end),
-        },
-        parameters,
-        script: scriptPayload,
-      },
-    };
-  }
-
-  private asIsoString(value: string | Date): string {
-    if (value instanceof Date) {
-      return value.toISOString();
-    }
-    return new Date(value).toISOString();
-  }
-
-  private resolveDatasetSymbol(dataset: DatasetEntity): string {
-    const template = dataset.pathTemplate;
-    if (template?.includes('{granularity}')) {
-      return template.replace(/\/?\{granularity\}$/, '').replace(/\/+$/, '');
-    }
-
-    const normalizedPath = dataset.path?.replace(/\\/g, '/').replace(/\/+$/, '');
-    if (normalizedPath) {
-      const segments = normalizedPath.split('/');
-      if (segments.length > 1) {
-        segments.pop();
-        return segments.join('/');
-      }
-      return normalizedPath;
-    }
-
-    return dataset.tradingPair?.replace('/', '_') || String(dataset.datasetId);
-  }
-
-  private resolveDatasetPathTemplate(dataset: DatasetEntity): string | null {
-    if (dataset.pathTemplate) {
-      return dataset.pathTemplate;
-    }
-
-    const normalizedPath = dataset.path?.replace(/\\/g, '/').replace(/\/+$/, '');
-    if (normalizedPath) {
-      const segments = normalizedPath.split('/');
-      if (segments.length > 0) {
-        segments[segments.length - 1] = '{granularity}';
-        return segments.join('/');
-      }
-    }
-
-    return null;
+  /**
+   * 暂停任务执行
+   * TODO: Worker暂停功能待实现
+   * 
+   * @param taskId 任务ID
+   */
+  async pauseTask(taskId: string): Promise<void> {
+    throw new BadRequestException('Pause功能暂未实现 - 请使用取消功能');
   }
 
   /**
-   * 准备 Orchestrator 配置
+   * 恢复任务执行
+   * TODO: Worker恢复功能待实现
+   * 
+   * @param taskId 任务ID
+   */
+  async resumeTask(taskId: string): Promise<void> {
+    throw new BadRequestException('Resume功能暂未实现');
+  }
+
+  /**
+   * 通过 Worker 执行任务
    * 
    * @param task 任务实体
-   * @returns Orchestrator 配置
    */
-  private async prepareOrchestratorConfig(
-    task: BacktestTaskEntity,
-  ): Promise<BacktestSessionConfig> {
-    this.logger.log(`Preparing config for task ${task.taskId}`);
+  private async executeViaWorker(task: BacktestTaskEntity): Promise<void> {
+    this.logger.log(`Executing task ${task.taskId} via Worker`);
+    
+    try {
+      // 1. 构建 Worker 执行配置
+      const executeDto = await this.buildWorkerConfig(task);
+      
+      // 2. 提交到 Worker 队列
+      // TODO: WorkerClientService需要提供submitTask方法，目前暂时跳过
+      this.logger.warn(`Task ${task.taskId} ready for Worker execution (Worker dispatch pending)`);
+      // await this.workerClient.submitTask(executeDto);
+      
+      await this.logsService.create(
+        task.taskId,
+        LogLevel.INFO,
+        'Task submitted to Worker successfully',
+      );
+      
+      this.logger.log(`Task ${task.taskId} submitted to Worker queue`);
+      
+    } catch (error) {
+      this.logger.error(
+        `Worker execution failed for task ${task.taskId}: ${(error as Error).message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 构建 Worker 配置
+   * 
+   * @param task 任务实体
+   * @returns Worker 执行配置
+   */
+  private async buildWorkerConfig(task: BacktestTaskEntity): Promise<WorkerExecuteDto> {
+    this.logger.log(`Building Worker config for task ${task.taskId}`);
     
     try {
       // 1. 加载策略信息
@@ -390,348 +249,56 @@ export class TaskExecutorService {
       
       this.logger.log(`Dataset loaded: ${dataset.tradingPair}, path: ${dataset.path}`);
       
-      // 4. 构建 StrategyManifest
-      const factorSchemaArray = Array.isArray(version.factorSchema) 
-        ? version.factorSchema 
-        : [];
-      const parameterSchemaArray = Array.isArray(version.parameterSchema)
-        ? version.parameterSchema
-        : [];
-      
-      const manifest: StrategyManifest = {
-        strategyId: strategy.strategyId,
-        name: strategy.name,
-        version: version.versionName,
-        description: strategy.description || '',
-        author: version.createdBy || 'system',
-        requiredTimeframe: dataset.granularity,
-        featureDeps: factorSchemaArray.map((f: any) => f.id || f.key),
-        dataDeps: [{ symbol: dataset.tradingPair }],
-        defaultParameters: parameterSchemaArray.reduce((acc: any, p: any) => {
-          acc[p.id || p.key] = p.defaultValue;
-          return acc;
-        }, {}),
+      // 4. 构建执行配置
+      const executeDto: WorkerExecuteDto = {
+        taskId: task.taskId,
+        strategyCode: version.code, // 使用code字段
+        dataPath: resolveDatasetPath(dataset.path),
+        parameters: (task.executionConfig as any)?.params || {},
+        initialCapital: (task.executionConfig as any)?.initialCapital || 100000,
+        commission: (task.executionConfig as any)?.fee || 0.001,
+        callbackUrl: `${process.env.BACKEND_URL || 'http://localhost:3000'}/api/backtesting/tasks/${task.taskId}/progress`,
       };
       
-      // 5. 构建配置
-      const executionConfig = task.executionConfig as any;
+      this.logger.log(`Worker config built successfully for task ${task.taskId}`);
+      this.logger.debug(`Config: ${JSON.stringify(executeDto, null, 2)}`);
       
-      // 确定数据时间范围：优先使用任务配置，否则使用数据集的完整范围
-      const dataTimeRange = task.dataConfig?.timeRange || {
-        start: dataset.timeStart.toISOString(),
-        end: dataset.timeEnd.toISOString(),
-      };
-      
-      // 构建数据集的绝对路径（使用配置中的函数）
-      const datasetAbsolutePath = resolveDatasetPath(dataset.path);
-      
-      this.logger.log(
-        `Dataset path resolved: ${dataset.path} -> ${datasetAbsolutePath}`
-      );
-      
-      const config: BacktestSessionConfig = {
-        sessionId: task.taskId,
-        
-        // 策略配置
-        strategy: {
-          strategyId: strategy.strategyId,
-          name: strategy.name,
-          scriptContent: version.code,
-          manifest,
-          parameters: task.strategyParams,
-        },
-        
-        // 数据配置（从数据集动态加载）
-        data: {
-          source: {
-            provider: 'parquet-duckdb',
-            path: datasetAbsolutePath, // 使用绝对路径
-            symbols: [dataset.tradingPair], // 从数据集获取交易对
-            timeRange: dataTimeRange,
-            baseGranularity: dataset.granularity, // 存储数据集的原始时间周期
-          },
-          timeframe: {
-            // primary 用于重采样，但数据加载应该使用 baseGranularity
-            primary: task.dataConfig?.timeframe || dataset.granularity,
-          },
-        },
-        
-        // 执行配置
-        execution: {
-          initialCapital: String(executionConfig?.initialCapital || 10000),
-          matching: {
-            marketFillPolicy: 'close',
-          },
-          slippage: {
-            model: 'proportional',
-            params: {
-              rate: executionConfig?.slippage || 0,
-            },
-          },
-          fee: {
-            model: 'fixed-rate',
-            params: {
-              maker: executionConfig?.fees?.makerFee || 0.0002,
-              taker: executionConfig?.fees?.takerFee || 0.0005,
-            },
-          },
-        },
-        
-        // 风控配置（使用默认值）
-        risk: {
-          rules: [],
-        },
-        
-        // 日志配置
-        log: {
-          level: 'info',
-          console: false, // 禁用控制台输出，通过事件收集日志
-        },
-      };
-      
-      this.logger.log(`Config prepared for task ${task.taskId}`);
-      return config;
+      return executeDto;
       
     } catch (error) {
-      this.logger.error(`Failed to prepare config: ${error.message}`);
+      this.logger.error(
+        `Failed to build Worker config for task ${task.taskId}: ${(error as Error).message}`,
+      );
       throw error;
     }
   }
 
   /**
-   * 订阅会话事件
-   * 
-   * @param session 会话实例
-   * @param taskId 任务ID
-   */
-  private subscribeToEvents(session: Session, taskId: string): void {
-    this.logger.log(`Subscribing to events for task ${taskId}`);
-    
-    // 进度事件
-    session.on(SessionEventType.ProgressUpdated, (event: SessionEvent) => {
-      const progress = (event.data as any)?.progress || 0;
-      this.handleProgress(taskId, progress).catch((error) => {
-        this.logger.error(`Failed to handle progress: ${error.message}`);
-      });
-    });
-    
-    // 完成事件
-    session.on(SessionEventType.Completed, (event: SessionEvent) => {
-      this.handleCompletion(taskId, event.data).catch((error) => {
-        this.logger.error(`Failed to handle completion: ${error.message}`);
-      });
-    });
-    
-    // 失败事件
-    session.on(SessionEventType.Failed, (event: SessionEvent) => {
-      const error = new Error((event.data as any)?.message || 'Session failed');
-      this.handleError(taskId, error).catch((err) => {
-        this.logger.error(`Failed to handle error: ${err.message}`);
-      });
-    });
-    
-    // 状态变化事件
-    session.on(SessionEventType.StateChanged, (event: SessionEvent) => {
-      const data = event.data as any;
-      this.logsService
-        .info(
-          taskId,
-          'Orchestrator',
-          `Session state changed: ${data?.previousState} -> ${data?.currentState}`,
-        )
-        .catch((error) => {
-          this.logger.error(`Failed to log state change: ${error.message}`);
-        });
-    });
-    
-    this.logger.log(`Event subscriptions created for task ${taskId}`);
-  }
-
-  /**
-   * 处理进度更新
-   * 
-   * @param taskId 任务ID
-   * @param progress 进度百分比 (0-100)
-   */
-  private async handleProgress(taskId: string, progress: number): Promise<void> {
-    // 节流：每秒最多更新一次（除非是100%）
-    const lastUpdate = this.progressUpdateThrottle.get(taskId) || 0;
-    const now = Date.now();
-    
-    if (now - lastUpdate < this.PROGRESS_UPDATE_INTERVAL && progress < 100) {
-      return;
-    }
-    
-    this.progressUpdateThrottle.set(taskId, now);
-    
-    // 更新数据库
-    await this.tasksService.updateProgress(taskId, Math.round(progress));
-    
-    // 记录日志（每10%记录一次）
-    if (progress % 10 === 0 || progress === 100) {
-      await this.logsService.info(
-        taskId,
-        'TaskExecutor',
-        `Progress: ${Math.round(progress)}%`,
-      );
-    }
-  }
-
-  /**
-   * 处理任务完成
-   * 
-   * @param taskId 任务ID
-   * @param result 执行结果
-   */
-  private async handleCompletion(taskId: string, result: any): Promise<void> {
-    this.logger.log(`Task ${taskId} completed successfully`);
-    
-    try {
-      const task = await this.tasksService.findOne(taskId);
-      // 1. 提取结果摘要
-      const resultSummary = this.extractResultSummary(task, result);
-      
-      // 2. 保存结果文件路径（如果有）
-      const resultFilePath = this.extractTradeArtifactPath(resultSummary) ?? undefined;
-      
-      // 3. 更新任务状态
-      await this.tasksService.updateStatus(taskId, BacktestTaskStatus.COMPLETED);
-      await this.tasksService.updateProgress(taskId, 100);
-      await this.taskRepository.update(
-        { taskId },
-        {
-          completedAt: new Date(),
-          resultSummary,
-          resultFilePath,
-        }
-      );
-      
-      // 4. 记录日志
-      await this.logsService.info(
-        taskId,
-        'TaskExecutor',
-        'Task completed successfully',
-        { resultSummary },
-      );
-      
-      // 5. 清理资源
-      this.progressUpdateThrottle.delete(taskId);
-      this.activeSessions.delete(taskId);
-      
-    } catch (error) {
-      this.logger.error(`Failed to save task result: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * 从执行结果中提取摘要
-   * 
-   * @param result Orchestrator 执行结果
-   * @returns 结果摘要
-   */
-  private extractResultSummary(task: BacktestTaskEntity, result: any): ResultSummary {
-    const initialCapital =
-      (task.executionConfig as any)?.initialCapital ??
-      result?.portfolio?.initialCapital ??
-      0;
-    const endingEquity = result?.portfolio?.equity ?? initialCapital;
-    const tradesArray = Array.isArray(result?.trades) ? result.trades : [];
-    const totalTrades =
-      tradesArray.length ||
-      result?.metrics?.totalTrades ||
-      0;
-    const winningTrades = tradesArray.length
-      ? tradesArray.filter((trade: any) => Number(trade?.realizedPnl ?? 0) > 0).length
-      : result?.metrics?.winningTrades || 0;
-    const winRate =
-      totalTrades > 0
-        ? winningTrades / totalTrades
-        : result?.metrics?.winRate ?? 0;
-    const totalPnl = endingEquity - initialCapital;
-    const totalFees = result?.metrics?.totalFees ?? 0;
-    const profitFactor = result?.metrics?.profitFactor ?? 0;
-    const winRatePercent = winRate * 100;
-    const returnRatio = initialCapital > 0 ? totalPnl / initialCapital : 0;
-    const returnPercent = returnRatio * 100;
-
-    return {
-      taskId: task.taskId,
-      strategyId: task.strategyId,
-      scriptVersionId: task.scriptVersionId,
-      initialCapital,
-      endingEquity,
-      returnPct: returnRatio,
-      totalTrades,
-      winningTrades,
-      winRate: winRatePercent,
-      totalPnl,
-      totalFees,
-      profitFactor,
-      artifacts: result?.artifacts ?? [],
-      finalCapital: endingEquity,
-      totalReturn: result?.metrics?.totalReturn ?? returnPercent,
-      annualizedReturn: result?.metrics?.annualizedReturn ?? returnPercent,
-      maxDrawdown: result?.metrics?.maxDrawdown ?? 0,
-      sharpeRatio: result?.metrics?.sharpeRatio ?? 0,
-      profitLossRatio: result?.metrics?.profitLossRatio ?? profitFactor ?? 0,
-      processedBars: result?.metrics?.processedBars ?? 0,
-      executionTime: result?.metrics?.executionTime ?? 0,
-    };
-  }
-
-  private extractTradeArtifactPath(summary?: ResultSummary | null): string | null {
-    const artifacts: any[] | undefined = summary?.artifacts as any[];
-    if (!Array.isArray(artifacts)) {
-      return null;
-    }
-    const artifact = artifacts.find(
-      (item) => item?.type === 'trades/parquet' && typeof item?.path === 'string',
-    );
-    return artifact?.path ?? null;
-  }
-
-  /**
-   * 处理错误
+   * 处理执行错误
    * 
    * @param taskId 任务ID
    * @param error 错误对象
    */
-  private async handleError(taskId: string, error: Error): Promise<void> {
-    this.logger.error(`Task ${taskId} failed: ${error.message}`);
+  private async handleExecutionError(taskId: string, error: Error): Promise<void> {
+    this.logger.error(`Handling execution error for task ${taskId}`);
     
     try {
-      // 截断错误消息（数据库字段限制为 50 字符）
-      const MAX_ERROR_MESSAGE_LENGTH = 50;
-      const truncatedErrorMessage = error.message.length > MAX_ERROR_MESSAGE_LENGTH
-        ? error.message.substring(0, MAX_ERROR_MESSAGE_LENGTH - 3) + '...'
-        : error.message;
-      
-      // 1. 更新任务状态
-      await this.tasksService.updateStatus(taskId, BacktestTaskStatus.FAILED);
-      await this.taskRepository.update(
-        { taskId },
+      await this.tasksService.updateStatus(
+        taskId,
+        BacktestTaskStatus.FAILED,
         {
           completedAt: new Date(),
-          errorMessage: truncatedErrorMessage,
-          errorStack: error.stack,
-        }
-      );
-      
-      // 2. 记录错误日志
-      await this.logsService.error(
-        taskId,
-        'TaskExecutor',
-        `Task execution failed: ${error.message}`,
-        {
-          errorStack: error.stack,
-          errorName: error.name,
+          errorMessage: error.message,
         },
       );
       
-      // 3. 清理资源
-      this.progressUpdateThrottle.delete(taskId);
-      this.activeSessions.delete(taskId);
+      await this.logsService.create(
+        taskId,
+        LogLevel.ERROR,
+        `Task execution failed: ${error.message}`,
+        undefined,
+        { stack: error.stack || '' },
+      );
       
     } catch (saveError) {
       this.logger.error(

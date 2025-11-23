@@ -102,23 +102,18 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
       fetchStrategy(selectedStrategyId)
         .then((data) => {
           setStrategy(data);
-          // 默认选择master版本
+          // 不再自动选择版本，让用户主动选择
+          // 只设置参数Schema（如果有master版本）
           const masterVersion = data.masterVersion || data.latestVersion;
-          if (masterVersion) {
-            form.setFieldsValue({
-              scriptVersionId: masterVersion.scriptVersionId,
-            });
-            // 设置参数Schema
-            if (masterVersion.parameterSchema) {
-              setParameterSchema(masterVersion.parameterSchema as ParamSchema[]);
-            }
+          if (masterVersion?.parameterSchema) {
+            setParameterSchema(masterVersion.parameterSchema as ParamSchema[]);
           }
         })
         .catch((err) => {
           message.error('加载策略详情失败: ' + err.message);
         });
     }
-  }, [open, selectedStrategyId, form]);
+  }, [open, selectedStrategyId]);
 
   // 监听数据集选择变化
   const handleDatasetChange = (datasetId: number) => {
@@ -332,22 +327,38 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
           name="scriptVersionId"
           label="脚本版本"
           rules={[{ required: true, message: '请选择脚本版本' }]}
-          tooltip="默认选择master版本，也可以选择其他版本进行测试"
+          tooltip="建议选择Master版本（已验证的稳定版本）。如需测试新功能，可选择其他版本"
+          extra={
+            strategy?.masterVersion && (
+              <span style={{ color: '#52c41a' }}>
+                💡 推荐选择 Master 版本：{strategy.masterVersion.versionName}
+              </span>
+            )
+          }
         >
           <Select
-            placeholder="请选择脚本版本"
+            placeholder="请选择脚本版本（建议选择Master版本）"
             disabled={!strategy}
             onChange={handleVersionChange}
-            options={strategy?.scriptVersions.map((v) => ({
-              label: (
-                <span>
-                  {v.versionName}
-                  {v.isMaster && <span style={{ color: '#52c41a' }}> [Master]</span>}
-                  {v.remark && <span style={{ color: '#999' }}> - {v.remark}</span>}
-                </span>
-              ),
-              value: v.scriptVersionId,
-            }))}
+            options={strategy?.scriptVersions
+              .sort((a, b) => {
+                // Master版本排在最前面
+                if (a.isMaster) return -1;
+                if (b.isMaster) return 1;
+                // 然后按创建时间降序
+                return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+              })
+              .map((v) => ({
+                label: (
+                  <span>
+                    {v.isMaster && <span style={{ color: '#52c41a', fontWeight: 'bold' }}>⭐ </span>}
+                    {v.versionName}
+                    {v.isMaster && <span style={{ color: '#52c41a' }}> [Master - 推荐]</span>}
+                    {v.remark && <span style={{ color: '#999' }}> - {v.remark}</span>}
+                  </span>
+                ),
+                value: v.scriptVersionId,
+              }))}
           />
         </Form.Item>
 

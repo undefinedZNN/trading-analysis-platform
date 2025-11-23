@@ -20,12 +20,15 @@ import {
 } from '@ant-design/icons';
 import {
   listBacktestTasks,
+  fetchTaskStatistics,
   type BacktestTask,
+  type TaskStatistics,
   BacktestTaskStatus,
   SortField,
   SortOrder,
-} from '../../../shared/api/backtestTasks';
+} from '../../../api/tasks-adapter';
 import { BacktestTaskCard } from '../components/BacktestTaskCard';
+import { TaskStatisticsCards } from '../components/TaskStatisticsCards';
 import { CreateBacktestTaskModal } from '../components/CreateBacktestTaskModal';
 import { listDatasets, type DatasetDto } from '../../../shared/api/tradingData';
 import { useNavigate } from 'react-router-dom';
@@ -52,6 +55,11 @@ export const BacktestTaskListPage: React.FC = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(12);
   
+  // 统计信息
+  const [statistics, setStatistics] = useState<TaskStatistics | undefined>();
+  const [statisticsLoading, setStatisticsLoading] = useState(false);
+  const [statisticsError, setStatisticsError] = useState<Error | null>(null);
+  
   // 筛选条件
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<BacktestTaskStatus | undefined>();
@@ -63,6 +71,26 @@ export const BacktestTaskListPage: React.FC = () => {
   
   // 创建任务模态框
   const [createModalOpen, setCreateModalOpen] = useState(false);
+
+  /**
+   * 加载任务统计
+   */
+  const loadStatistics = async () => {
+    try {
+      setStatisticsLoading(true);
+      setStatisticsError(null);
+      logEvent('开始加载任务统计');
+      const stats = await fetchTaskStatistics();
+      setStatistics(stats);
+      logEvent('任务统计加载完成', stats);
+    } catch (error: any) {
+      console.error('[BacktestTasks] 加载任务统计失败', error);
+      setStatisticsError(error);
+      // 不显示错误消息，由组件内部处理
+    } finally {
+      setStatisticsLoading(false);
+    }
+  };
 
   /**
    * 加载任务列表
@@ -117,10 +145,11 @@ export const BacktestTaskListPage: React.FC = () => {
   };
 
   /**
-   * 初始加载数据集
+   * 初始加载数据集和统计信息
    */
   useEffect(() => {
     loadDatasets();
+    loadStatistics();
   }, []);
 
   /**
@@ -168,6 +197,7 @@ export const BacktestTaskListPage: React.FC = () => {
     setCreateModalOpen(false);
     setPage(1);
     loadTasks();
+    loadStatistics(); // 刷新统计信息
   };
 
   return (
@@ -193,6 +223,14 @@ export const BacktestTaskListPage: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      {/* 统计卡片 */}
+      <TaskStatisticsCards
+        statistics={statistics}
+        loading={statisticsLoading}
+        error={statisticsError}
+        onRefresh={loadStatistics}
+      />
 
       {/* 筛选和搜索 */}
       <Card style={{ marginBottom: 24 }}>
