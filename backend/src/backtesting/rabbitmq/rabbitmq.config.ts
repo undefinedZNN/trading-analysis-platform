@@ -46,6 +46,24 @@ export const RABBITMQ_ROUTING_KEYS = {
 } as const;
 
 /**
+ * 队列与路由键绑定关系
+ * 用于在 topology 初始化时绑定 Exchange -> Queue，避免消息被丢弃
+ */
+export const QUEUE_BINDINGS: Array<{ queue: string; routingKey: string }> = [
+  // Backend -> Worker
+  { queue: RABBITMQ_QUEUES.TASK, routingKey: RABBITMQ_ROUTING_KEYS.TASK_CREATE },
+  { queue: RABBITMQ_QUEUES.TASK_CANCEL, routingKey: RABBITMQ_ROUTING_KEYS.TASK_CANCEL },
+
+  // Worker -> Backend
+  { queue: RABBITMQ_QUEUES.PROGRESS, routingKey: RABBITMQ_ROUTING_KEYS.PROGRESS_UPDATE },
+  { queue: RABBITMQ_QUEUES.STATUS, routingKey: RABBITMQ_ROUTING_KEYS.STATUS_CHANGE },
+  { queue: RABBITMQ_QUEUES.RESULT, routingKey: RABBITMQ_ROUTING_KEYS.RESULT_COMPLETE },
+  { queue: RABBITMQ_QUEUES.ERROR, routingKey: RABBITMQ_ROUTING_KEYS.ERROR_REPORT },
+  { queue: RABBITMQ_QUEUES.LOG, routingKey: RABBITMQ_ROUTING_KEYS.LOG_MESSAGE },
+  { queue: RABBITMQ_QUEUES.HEARTBEAT, routingKey: RABBITMQ_ROUTING_KEYS.WORKER_HEARTBEAT },
+];
+
+/**
  * 获取默认RabbitMQ配置
  */
 export function getDefaultRabbitMQConfig(): RabbitMQConfig {

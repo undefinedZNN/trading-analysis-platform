@@ -220,3 +220,4 @@ class BacktestTaskConsumer:
         """上下文管理器出口"""
         self.stop()
 
+

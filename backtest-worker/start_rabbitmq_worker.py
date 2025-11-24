@@ -16,6 +16,8 @@ import json
 import logging
 import signal
 import traceback
+import requests
+import psutil
 from datetime import datetime
 
 # 添加项目路径
@@ -26,6 +28,7 @@ from backtrader_integration.messaging import (
     BacktestTaskConsumer,
     RabbitMQClient,
     RabbitMQConfig,
+    TaskConsumerConfig,
     TaskMessage,
 )
 
@@ -41,6 +44,7 @@ rabbitmq_client: RabbitMQClient = None
 task_consumer: BacktestTaskConsumer = None
 worker_id = os.getenv('WORKER_ID', 'worker-python-01')
 is_running = True
+backend_base = os.getenv('BACKEND_URL', 'http://localhost:3000/api/v1/internal/workers')
 
 
 def handle_shutdown(signum, frame):
@@ -48,6 +52,13 @@ def handle_shutdown(signum, frame):
     global is_running
     logger.info("Received shutdown signal, stopping worker...")
     is_running = False
+    try:
+        if task_consumer:
+            task_consumer.stop()
+        if rabbitmq_client:
+            rabbitmq_client.close()
+    finally:
+        sys.exit(0)
 
 
 def handle_backtest_task(task: TaskMessage) -> bool:
@@ -70,13 +81,13 @@ def handle_backtest_task(task: TaskMessage) -> bool:
         
         # 1. 发送开始状态
         logger.info(f"🚀 开始执行任务: {task.task_id}")
-        rabbitmq_client.send_message('backtest.status', {
+        rabbitmq_client.send_message('status.change', {
             'task_id': task.task_id,
             'worker_id': worker_id,
             'status': 'RUNNING',
             'start_time': datetime.utcnow().isoformat() + 'Z',
             'timestamp': datetime.utcnow().isoformat() + 'Z',
-        }, 'status.change')
+        })
         
         # 2. 模拟执行过程（实际应该调用Backtrader执行）
         logger.info("⚙️ 执行回测中...")
@@ -107,14 +118,14 @@ def handle_backtest_task(task: TaskMessage) -> bool:
         
         # 3. 发送完成状态
         logger.info(f"✅ 任务完成: {task.task_id}")
-        rabbitmq_client.send_message('backtest.status', {
+        rabbitmq_client.send_message('status.change', {
             'task_id': task.task_id,
             'worker_id': worker_id,
             'status': 'COMPLETED',
             'end_time': datetime.utcnow().isoformat() + 'Z',
             'duration': 10,
             'timestamp': datetime.utcnow().isoformat() + 'Z',
-        }, 'status.change')
+        })
         
         # 4. 发送结果
         result_data = {
@@ -140,7 +151,7 @@ def handle_backtest_task(task: TaskMessage) -> bool:
             'completed_at': datetime.utcnow().isoformat() + 'Z',
         }
         
-        rabbitmq_client.send_message('backtest.result', result_data, 'result.complete')
+        rabbitmq_client.send_message('result.complete', result_data)
         logger.info("📤 结果已发送")
         
         logger.info("=" * 80)
@@ -183,16 +194,21 @@ def start_heartbeat():
     def send_heartbeat():
         while is_running:
             try:
+                cpu = psutil.cpu_percent(interval=0.1)
+                mem = psutil.virtual_memory().percent
+                status = 'idle'
+                if cpu >= 80 or mem >= 90:
+                    status = 'overloaded'
                 rabbitmq_client.send_heartbeat(
                     worker_id=worker_id,
-                    status='healthy',
+                    status=status,
                     metrics={
-                        'cpu_usage': 0.25,
-                        'memory_usage': 0.35,
-                        'active_tasks': 0,
-                    }
+                        'cpu_usage': cpu,
+                        'memory_usage': mem,
+                        'current_task_id': None,
+                    },
                 )
-                logger.debug(f"💓 心跳已发送: {worker_id}")
+                logger.debug(f"💓 心跳已发送: {worker_id}, status={status}, cpu={cpu:.1f}%, mem={mem:.1f}%")
             except Exception as e:
                 logger.error(f"心跳发送失败: {e}")
             
@@ -201,6 +217,41 @@ def start_heartbeat():
     heartbeat_thread = threading.Thread(target=send_heartbeat, daemon=True)
     heartbeat_thread.start()
     logger.info("💓 心跳线程已启动")
+
+
+def start_backend_heartbeat():
+    """向 Backend 周期性发送心跳，确保 Worker 管理可见"""
+    import threading
+
+    heartbeat_url = f"{backend_base}/heartbeat"
+
+    def send():
+        while is_running:
+            try:
+                cpu = psutil.cpu_percent(interval=0.1)
+                mem = psutil.virtual_memory().percent
+                status = 'idle'
+                if cpu >= 80 or mem >= 90:
+                    status = 'overloaded'
+                payload = {
+                    "workerId": worker_id,
+                    "status": status,
+                    "currentLoad": max(cpu, mem) / 100.0,
+                    "metrics": {
+                        "cpu": cpu,
+                        "memoryUsed": mem,
+                        "runningTasks": 0,
+                    },
+                }
+                resp = requests.post(heartbeat_url, json=payload, timeout=5)
+                if resp.status_code not in (200, 201):
+                    logger.warning("Backend heartbeat failed: %s %s", resp.status_code, resp.text)
+            except Exception as e:
+                logger.warning("Backend heartbeat error: %s", e)
+            time.sleep(30)
+
+    threading.Thread(target=send, daemon=True).start()
+    logger.info("💓 Backend 心跳线程已启动")
 
 
 def main():
@@ -217,24 +268,56 @@ def main():
     logger.info("=" * 80)
     
     try:
-        # 1. 创建RabbitMQ客户端
-        rabbitmq_config = RabbitMQConfig()
+        # 1. 读取配置（支持环境变量覆盖）
+        rabbitmq_config = RabbitMQConfig(
+            host=os.getenv('RABBITMQ_HOST', 'localhost'),
+            port=int(os.getenv('RABBITMQ_PORT', '5672')),
+            vhost=os.getenv('RABBITMQ_VHOST', '/backtest'),
+            username=os.getenv('RABBITMQ_USERNAME', 'dev'),
+            password=os.getenv('RABBITMQ_PASSWORD', 'devpass'),
+            exchange=os.getenv('RABBITMQ_EXCHANGE', 'backtest'),
+        )
+        task_queue = os.getenv('RABBITMQ_TASK_QUEUE', 'backtest.task')
+        cancel_queue = os.getenv('RABBITMQ_TASK_CANCEL_QUEUE', 'backtest.task.cancel')
+
+        logger.info(
+            "RabbitMQ config: host=%s port=%s vhost=%s exchange=%s queue=%s cancelQueue=%s",
+            rabbitmq_config.host,
+            rabbitmq_config.port,
+            rabbitmq_config.vhost,
+            rabbitmq_config.exchange,
+            task_queue,
+            cancel_queue,
+        )
+
+        # 2. 创建RabbitMQ客户端
         rabbitmq_client = RabbitMQClient(rabbitmq_config)
         logger.info("✅ RabbitMQ客户端初始化完成")
         
-        # 2. 启动心跳
+        # 3. 启动心跳（RabbitMQ + Backend）
         start_heartbeat()
+        start_backend_heartbeat()
         
-        # 3. 创建任务消费者
-        task_consumer = BacktestTaskConsumer(rabbitmq_config)
+        # 4. 创建任务消费者（明确队列名）
+        consumer_config = TaskConsumerConfig(
+            queue_name=task_queue,
+            cancel_queue=cancel_queue,
+            auto_ack=False,
+            prefetch_count=1,
+        )
+        task_consumer = BacktestTaskConsumer(
+            rabbitmq_config=rabbitmq_config,
+            consumer_config=consumer_config,
+        )
         task_consumer.set_task_callback(handle_backtest_task)
         task_consumer.set_cancel_callback(handle_cancel_task)
         logger.info("✅ 任务消费者初始化完成")
         
-        # 4. 开始消费任务
+        # 5. 开始消费任务
         logger.info("=" * 80)
         logger.info("👂 开始监听任务队列...")
-        logger.info("   队列: backtest.task")
+        logger.info("   队列: %s", task_queue)
+        logger.info("   取消队列: %s", cancel_queue)
         logger.info("   按 Ctrl+C 停止")
         logger.info("=" * 80)
         
@@ -258,4 +341,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

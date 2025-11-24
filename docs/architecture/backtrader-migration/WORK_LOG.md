@@ -370,3 +370,17 @@ async updateScriptVersion(strategyId, scriptVersionId, dto) {
 
 🎉 所有决策已完成，可以全力开发了！
 
+---
+
+## 📅 2025-11-24 工作记录
+
+### ✅ 进展
+1. RabbitMQ 任务发布/消费链路修复：后端绑定补全，publisher 直接投递队列，Worker routing key 对齐。
+2. Worker 启动脚本优化：`start_worker.sh` 直接注册 Worker + 启动消费，Ctrl+C 可优雅退出。
+3. 心跳数据对齐：RabbitMQ/HTTP 双通道同步 cpu_usage/memory_usage/status，后台 Worker 管理可持续显示。
+
+### 📌 风险/待办
+1. 继续实现/联调回测结果展示页面（任务 1.2.2 未完成）。
+2. Phase 1 剩余任务：Checkpoint 性能优化（1.1.3，P1）、前端结果页（1.2.2，P0）。
+
+**最后更新**：2025-11-24 11:30

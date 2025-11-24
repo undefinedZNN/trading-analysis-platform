@@ -69,14 +69,12 @@ export class RabbitMQPublisherService {
   async publishTask(message: TaskMessage): Promise<boolean> {
     try {
       const channel = this.connectionService.getPublishChannel();
-      const config = this.connectionService.getConfig();
-
       const messageBuffer = Buffer.from(JSON.stringify(message));
       const priority = message.priority || 5;
 
-      const published = channel.publish(
-        config.exchange,
-        RABBITMQ_ROUTING_KEYS.TASK_CREATE,
+      // 直接投递到队列，避免路由键/绑定问题导致消息丢失
+      const sent = channel.sendToQueue(
+        RABBITMQ_QUEUES.TASK,
         messageBuffer,
         {
           persistent: true,
@@ -89,16 +87,16 @@ export class RabbitMQPublisherService {
             strategyId: message.strategyId,
             userId: message.userId,
           },
-        }
+        },
       );
 
-      if (published) {
-        this.logger.log(`Task published: ${message.taskId} (priority: ${priority})`);
+      if (sent) {
+        this.logger.log(`Task sent to queue: ${message.taskId} (priority: ${priority})`);
         return true;
-      } else {
-        this.logger.warn(`Failed to publish task (channel buffer full): ${message.taskId}`);
-        return false;
       }
+
+      this.logger.warn(`Failed to send task to queue (channel buffer full): ${message.taskId}`);
+      return false;
 
     } catch (error) {
       this.logger.error(`Error publishing task ${message.taskId}: ${error.message}`);

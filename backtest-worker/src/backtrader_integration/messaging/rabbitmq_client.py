@@ -18,12 +18,12 @@ logger = logging.getLogger(__name__)
 
 class MessageType(Enum):
     """消息类型"""
-    PROGRESS = 'backtest.progress'
-    RESULT = 'backtest.result'
-    ERROR = 'backtest.error'
-    LOG = 'backtest.log'
-    HEARTBEAT = 'backtest.heartbeat'
-    STATUS = 'backtest.status'
+    PROGRESS = 'progress.update'
+    RESULT = 'result.complete'
+    ERROR = 'error.report'
+    LOG = 'log.message'
+    HEARTBEAT = 'worker.heartbeat'
+    STATUS = 'status.change'
 
 
 @dataclass
@@ -253,7 +253,7 @@ class RabbitMQClient:
     def send_heartbeat(
         self,
         worker_id: str,
-        status: str = 'healthy',
+        status: str = 'idle',
         metrics: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
@@ -274,7 +274,19 @@ class RabbitMQClient:
         }
         
         if metrics:
-            payload['metrics'] = metrics
+            # 后端消费心跳时读取 resources 字段
+            payload['resources'] = {
+                'cpu_usage': metrics.get('cpu_usage') or metrics.get('cpu'),
+                'memory_usage': metrics.get('memory_usage') or metrics.get('memory'),
+            }
+            if metrics.get('current_task_id'):
+                payload['current_task_id'] = metrics.get('current_task_id')
+            # 兼容使用 metrics 字段的消费者
+            payload['metrics'] = {
+                'cpu': metrics.get('cpu_usage') or metrics.get('cpu'),
+                'memoryUsed': metrics.get('memory_usage') or metrics.get('memory'),
+                'runningTasks': 1 if metrics.get('current_task_id') else 0,
+            }
         
         return self.send_message(MessageType.HEARTBEAT.value, payload)
     
@@ -377,16 +389,30 @@ class MessageConsumer:
             self.connection = pika.BlockingConnection(parameters)
             self.channel = self.connection.channel()
             
-            # 声明队列
+            # 声明队列（如果不存在则创建），并匹配服务器端既有参数
+            queue_args = None
+            if self.queue_name == 'backtest.task':
+                # 与后端创建的队列参数保持一致，避免 PRECONDITION_FAILED
+                queue_args = {
+                    'x-max-priority': 10,
+                    'x-message-ttl': 3600000,
+                }
             self.channel.queue_declare(
                 queue=self.queue_name,
-                durable=True
+                durable=True,
+                arguments=queue_args
             )
             
             # 设置 QoS（每次只消费一条消息）
             self.channel.basic_qos(prefetch_count=1)
             
-            logger.info(f"Consumer connected: queue={self.queue_name}")
+            logger.info(
+                "Consumer connected: queue=%s host=%s vhost=%s exchange=%s",
+                self.queue_name,
+                self.config.host,
+                self.config.vhost,
+                self.config.exchange,
+            )
             
         except Exception as e:
             logger.error(f"Failed to connect consumer: {e}")
@@ -404,6 +430,8 @@ class MessageConsumer:
             callback: 消息处理回调函数，返回 True 表示成功
             auto_ack: 是否自动确认
         """
+        logger.info("Start consuming queue=%s (auto_ack=%s)", self.queue_name, auto_ack)
+
         def on_message(ch, method, properties, body):
             try:
                 # 解析消息
@@ -448,4 +476,3 @@ class MessageConsumer:
             logger.info("Consumer connection closed")
         except Exception as e:
             logger.warning(f"Error closing consumer: {e}")
-

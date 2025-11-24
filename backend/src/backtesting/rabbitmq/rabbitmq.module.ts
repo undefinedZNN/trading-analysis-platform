@@ -21,3 +21,4 @@ import { RabbitMQPublisherService } from './rabbitmq-publisher.service';
 })
 export class RabbitMQModule {}
 
+

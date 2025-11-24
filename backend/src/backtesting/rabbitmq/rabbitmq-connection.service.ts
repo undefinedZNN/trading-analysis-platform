@@ -6,6 +6,7 @@ import {
   getDefaultRabbitMQConfig, 
   RABBITMQ_QUEUES,
   QUEUE_OPTIONS,
+  QUEUE_BINDINGS,
 } from './rabbitmq.config';
 
 /**
@@ -149,6 +150,18 @@ export class RabbitMQConnectionService implements OnModuleInit, OnModuleDestroy 
       this.logger.log(`Queue '${queueName}' declared`);
     }
 
+    // 绑定 Exchange -> Queue
+    for (const binding of QUEUE_BINDINGS) {
+      await this.publishChannel.bindQueue(
+        binding.queue,
+        this.config.exchange,
+        binding.routingKey,
+      );
+      this.logger.log(
+        `Queue '${binding.queue}' bound to exchange '${this.config.exchange}' with routing key '${binding.routingKey}'`,
+      );
+    }
+
     this.logger.log('RabbitMQ topology setup complete');
   }
 
@@ -257,4 +270,3 @@ export class RabbitMQConnectionService implements OnModuleInit, OnModuleDestroy 
     return this.config;
   }
 }
-
