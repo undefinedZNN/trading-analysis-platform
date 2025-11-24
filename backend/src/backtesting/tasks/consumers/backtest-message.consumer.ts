@@ -335,6 +335,14 @@ export class BacktestMessageConsumer implements OnModuleInit {
             summary: message.metrics, // 临时使用metrics作为summary
           });
 
+          // 记录文件路径（供 trades/equity 查询）
+          if (message.files?.trades || message.files?.equity) {
+            await this.tasksService.updateFilePaths(message.task_id, {
+              tradesFilePath: message.files?.trades,
+              equityFilePath: message.files?.equity,
+            });
+          }
+
           // 触发主结果生成（如果有Parquet文件）
           if (message.files?.trades || message.files?.equity) {
             this.logger.log(`Triggering primary result generation for task ${message.task_id}`);
@@ -488,4 +496,3 @@ export class BacktestMessageConsumer implements OnModuleInit {
     this.logger.log('Heartbeat consumer started');
   }
 }
-

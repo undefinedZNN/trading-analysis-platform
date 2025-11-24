@@ -461,5 +461,80 @@ export async function validateStrategyScript(code: string) {
   return data;
 }
 
+// ============================================
+// 回测结果数据 API
+// ============================================
+
+/**
+ * 权益曲线数据点
+ */
+export interface EquityPoint {
+  datetime: string;
+  value: number;
+  cash: number;
+}
+
+/**
+ * 回撤数据点
+ */
+export interface DrawdownPoint {
+  datetime: string;
+  drawdown: number;
+  drawdownPercent: number;
+}
+
+/**
+ * 获取任务的权益曲线数据
+ * @param taskId 任务ID
+ * @returns 权益曲线数据点数组
+ */
+export async function fetchEquityCurve(taskId: string): Promise<EquityPoint[]> {
+  const backtestClient = axios.create({
+    baseURL: 'http://localhost:3000/api/v1/backtest',
+    timeout: 30000, // 30秒超时，因为数据可能较大
+  });
+  
+  const { data } = await backtestClient.get<EquityPoint[]>(`/tasks/${taskId}/equity`);
+  return data;
+}
+
+/**
+ * 获取任务的回撤曲线数据
+ * 从权益曲线数据计算得出
+ * @param equityCurve 权益曲线数据
+ * @param initialCapital 初始资金
+ * @returns 回撤曲线数据点数组
+ */
+export function calculateDrawdownFromEquity(
+  equityCurve: EquityPoint[],
+  initialCapital: number
+): DrawdownPoint[] {
+  if (!equityCurve || equityCurve.length === 0) {
+    return [];
+  }
+
+  const drawdownData: DrawdownPoint[] = [];
+  let peak = initialCapital;
+
+  for (const point of equityCurve) {
+    // 更新峰值
+    if (point.value > peak) {
+      peak = point.value;
+    }
+
+    // 计算回撤
+    const drawdown = peak - point.value;
+    const drawdownPercent = peak > 0 ? (drawdown / peak) * 100 : 0;
+
+    drawdownData.push({
+      datetime: point.datetime,
+      drawdown,
+      drawdownPercent: -drawdownPercent, // 负值表示回撤
+    });
+  }
+
+  return drawdownData;
+}
+
 
 

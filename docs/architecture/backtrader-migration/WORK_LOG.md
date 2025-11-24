@@ -378,6 +378,8 @@ async updateScriptVersion(strategyId, scriptVersionId, dto) {
 1. RabbitMQ 任务发布/消费链路修复：后端绑定补全，publisher 直接投递队列，Worker routing key 对齐。
 2. Worker 启动脚本优化：`start_worker.sh` 直接注册 Worker + 启动消费，Ctrl+C 可优雅退出。
 3. 心跳数据对齐：RabbitMQ/HTTP 双通道同步 cpu_usage/memory_usage/status，后台 Worker 管理可持续显示。
+4. Checkpoint 性能优化：CheckpointManager 支持异步写入、写任务节流（max_pending_writes）、线程池；减少同步 IO 阻塞。
+5. Worker 结果路径与防护：结果消费者写入 trades/equity 路径；Worker 缺少真实结果时写占位文件并 Ack，防止任务反复重试（待接入真实回测输出替换占位）。
 
 ### 📌 风险/待办
 1. 继续实现/联调回测结果展示页面（任务 1.2.2 未完成）。

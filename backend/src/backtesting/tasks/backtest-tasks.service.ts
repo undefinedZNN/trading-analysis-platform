@@ -511,6 +511,7 @@ export class BacktestTasksService {
   }> {
     const task = await this.findOne(taskId);
     const relativePath =
+      task.tradesFilePath ??
       task.resultFilePath ??
       this.extractTradeArtifactPath(task.resultSummary) ??
       null;
@@ -707,6 +708,7 @@ export class BacktestTasksService {
     const positionAvgEntry = this.toNumber(row.position_avg_entry);
     const context = this.safeParseJson(row.context_json);
     const exitSegments = this.parseExitSegments(context);
+    const sequenceId = this.toNumber(row.sequence_id);
     return {
       taskId: row.task_id,
       sessionId: row.session_id,
@@ -723,7 +725,7 @@ export class BacktestTasksService {
       feeCurrency: row.fee_currency ?? undefined,
       liquidity: row.liquidity ?? undefined,
       timestamp: this.formatTimestamp(row.ts),
-      sequenceId: row.sequence_id ?? undefined,
+      sequenceId: sequenceId ?? undefined,
       position:
         positionQuantity !== null || positionAvgEntry !== null || row.position_side
           ? {

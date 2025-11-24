@@ -10,6 +10,8 @@ import pickle
 import json
 import time
 import logging
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pathlib import Path
@@ -32,7 +34,10 @@ class CheckpointManager:
         self,
         checkpoint_dir: str = './checkpoints',
         max_checkpoints: int = 5,
-        task_id: str = 'default'
+        task_id: str = 'default',
+        async_write: bool = True,
+        max_pending_writes: int = 2,
+        worker_threads: int = 1,
     ):
         """
         初始化 Checkpoint 管理器
@@ -41,18 +46,33 @@ class CheckpointManager:
             checkpoint_dir: Checkpoint 存储目录
             max_checkpoints: 最大保留的 Checkpoint 数量
             task_id: 任务ID（用于区分不同任务）
+            async_write: 是否异步写入（降低阻塞，提升性能）
+            max_pending_writes: 最大允许的未完成写任务数，超过后会阻塞等待
+            worker_threads: 异步写线程数量（默认1，保持顺序和低开销）
         """
         self.checkpoint_dir = Path(checkpoint_dir)
         self.max_checkpoints = max_checkpoints
         self.task_id = task_id
+        self.async_write = async_write
+        self.max_pending_writes = max_pending_writes
         
         # 创建目录
         self.task_dir = self.checkpoint_dir / task_id
         self.task_dir.mkdir(parents=True, exist_ok=True)
         
+        # 异步写入资源
+        self._executor: Optional[ThreadPoolExecutor] = None
+        self._pending: deque[Future] = deque()
+        if self.async_write:
+            self._executor = ThreadPoolExecutor(
+                max_workers=max(1, worker_threads),
+                thread_name_prefix=f"checkpoint-{task_id}",
+            )
+        
         logger.info(
             f"CheckpointManager initialized: dir={self.task_dir}, "
-            f"max={max_checkpoints}, task_id={task_id}"
+            f"max={max_checkpoints}, task_id={task_id}, "
+            f"async_write={self.async_write}"
         )
     
     def save_checkpoint(
@@ -82,52 +102,132 @@ class CheckpointManager:
         metadata_path = self.task_dir / f'{checkpoint_name}.json'
         
         try:
-            # 准备 Checkpoint 数据
-            checkpoint_data = {
-                'version': '1.0',
-                'task_id': self.task_id,
-                'current_bar': current_bar,
-                'total_bars': total_bars,
-                'progress': (current_bar / total_bars * 100) if total_bars > 0 else 0,
-                'strategy_state': strategy_state,
-                'cerebro_state': cerebro_state,
-                'timestamp': time.time(),
-                'datetime': timestamp,
-            }
-            
-            # 保存二进制数据（使用 pickle）
-            with open(checkpoint_path, 'wb') as f:
-                pickle.dump(checkpoint_data, f, protocol=pickle.HIGHEST_PROTOCOL)
-            
-            # 保存元数据（使用 JSON，方便查看）
-            metadata_info = {
-                'task_id': self.task_id,
-                'checkpoint_name': checkpoint_name,
-                'current_bar': current_bar,
-                'total_bars': total_bars,
-                'progress': checkpoint_data['progress'],
-                'timestamp': timestamp,
-                'file_size': os.path.getsize(checkpoint_path),
-                'metadata': metadata or {},
-            }
-            
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata_info, f, indent=2, ensure_ascii=False)
-            
-            logger.info(
-                f"Checkpoint saved: {checkpoint_name}, "
-                f"bar={current_bar}/{total_bars} ({checkpoint_data['progress']:.1f}%), "
-                f"size={os.path.getsize(checkpoint_path)/1024:.1f}KB"
+            checkpoint_data = self._build_checkpoint_data(
+                current_bar=current_bar,
+                total_bars=total_bars,
+                strategy_state= strategy_state,
+                cerebro_state=cerebro_state,
+                timestamp=timestamp,
             )
-            
-            # 清理旧的 Checkpoint
-            self._cleanup_old_checkpoints()
-            
-            return str(checkpoint_path)
+            metadata_info = self._build_metadata(
+                checkpoint_name=checkpoint_name,
+                current_bar=current_bar,
+                total_bars=total_bars,
+                progress=checkpoint_data['progress'],
+                timestamp=timestamp,
+                extra_metadata=metadata,
+                checkpoint_path=checkpoint_path,
+            )
+
+            if self.async_write and self._executor:
+                self._throttle_pending()
+                future = self._executor.submit(
+                    self._write_checkpoint_files,
+                    checkpoint_path,
+                    metadata_path,
+                    checkpoint_data,
+                    metadata_info,
+                )
+                self._pending.append(future)
+            else:
+                self._write_checkpoint_files(
+                    checkpoint_path,
+                    metadata_path,
+                    checkpoint_data,
+                    metadata_info,
+                )
             
         except Exception as e:
             logger.error(f"Failed to save checkpoint: {e}", exc_info=True)
             raise
+        
+        return str(checkpoint_path)
+    
+    def _build_checkpoint_data(
+        self,
+        current_bar: int,
+        total_bars: int,
+        strategy_state: Dict[str, Any],
+        cerebro_state: Optional[Dict[str, Any]],
+        timestamp: str,
+    ) -> Dict[str, Any]:
+        return {
+            'version': '1.0',
+            'task_id': self.task_id,
+            'current_bar': current_bar,
+            'total_bars': total_bars,
+            'progress': (current_bar / total_bars * 100) if total_bars > 0 else 0,
+            'strategy_state': strategy_state,
+            'cerebro_state': cerebro_state,
+            'timestamp': time.time(),
+            'datetime': timestamp,
+        }
+    
+    def _build_metadata(
+        self,
+        checkpoint_name: str,
+        current_bar: int,
+        total_bars: int,
+        progress: float,
+        timestamp: str,
+        extra_metadata: Optional[Dict[str, Any]],
+        checkpoint_path: Path,
+    ) -> Dict[str, Any]:
+        return {
+            'task_id': self.task_id,
+            'checkpoint_name': checkpoint_name,
+            'current_bar': current_bar,
+            'total_bars': total_bars,
+            'progress': progress,
+            'timestamp': timestamp,
+            'file_size': None,  # 写入后更新
+            'metadata': extra_metadata or {},
+        }
+    
+    def _write_checkpoint_files(
+        self,
+        checkpoint_path: Path,
+        metadata_path: Path,
+        checkpoint_data: Dict[str, Any],
+        metadata_info: Dict[str, Any],
+    ) -> None:
+        # 保存二进制数据（使用 pickle）
+        with open(checkpoint_path, 'wb') as f:
+            pickle.dump(checkpoint_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        # 保存元数据（使用 JSON，方便查看）
+        metadata_info['file_size'] = os.path.getsize(checkpoint_path)
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata_info, f, indent=2, ensure_ascii=False)
+        
+        logger.info(
+            f"Checkpoint saved: {checkpoint_path.stem}, "
+            f"bar={checkpoint_data['current_bar']}/{checkpoint_data['total_bars']} "
+            f"({checkpoint_data['progress']:.1f}%), "
+            f"size={metadata_info['file_size']/1024:.1f}KB"
+        )
+        
+        # 清理旧的 Checkpoint
+        self._cleanup_old_checkpoints()
+    
+    def _throttle_pending(self) -> None:
+        """控制未完成写任务数量，避免积压导致内存暴涨"""
+        while self._pending and len(self._pending) >= self.max_pending_writes:
+            future = self._pending.popleft()
+            try:
+                future.result(timeout=10)
+            except Exception as e:
+                logger.warning(f"Async checkpoint write failed: {e}")
+    
+    def close(self) -> None:
+        """关闭异步线程池，等待未完成的写任务"""
+        if self._executor:
+            for future in list(self._pending):
+                try:
+                    future.result(timeout=10)
+                except Exception as e:
+                    logger.warning(f"Pending checkpoint write failed: {e}")
+            self._executor.shutdown(wait=True)
     
     def load_checkpoint(self, checkpoint_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
@@ -361,4 +461,3 @@ class CheckpointTrigger:
         """
         self.last_checkpoint_bar = current_bar
         self.last_checkpoint_time = time.time()
-
