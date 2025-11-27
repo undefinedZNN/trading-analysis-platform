@@ -263,9 +263,17 @@ export async function listTaskTrades(
   taskId: string,
   query: ListTaskTradesQuery,
 ): Promise<ListTaskTradesResponse> {
-  const response = await client.get(`/${taskId}/trades/list`, {
-    params: query,
-  });
+  // 使用 /api/v1/backtest/tasks 路径（BacktestResultsController）
+  // 注意：参数名是 limit 不是 pageSize
+  const response = await axios.get(
+    `http://localhost:3000/api/v1/backtest/tasks/${taskId}/trades`,
+    {
+      params: {
+        page: query.page,
+        limit: query.pageSize, // 将 pageSize 映射为 limit
+      },
+    }
+  );
   return response.data;
 }
 

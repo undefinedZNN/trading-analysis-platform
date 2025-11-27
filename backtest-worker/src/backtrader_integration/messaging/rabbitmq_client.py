@@ -34,7 +34,7 @@ class RabbitMQConfig:
     vhost: str = '/backtest'
     username: str = 'dev'
     password: str = 'devpass'
-    exchange: str = 'backtest'
+    exchange: str = 'backtest.exchange'  # 修改为与Backend一致
     
     # 连接池配置
     pool_size: int = 5
@@ -167,7 +167,8 @@ class RabbitMQClient:
         task_id: str,
         progress: float,
         message: str = '',
-        details: Optional[Dict[str, Any]] = None
+        details: Optional[Dict[str, Any]] = None,
+        worker_id: Optional[str] = None
     ) -> bool:
         """
         发送进度消息
@@ -177,18 +178,38 @@ class RabbitMQClient:
             progress: 进度百分比 (0-100)
             message: 进度消息
             details: 额外信息
+            worker_id: Worker ID (可选)
         
         Returns:
             是否发送成功
         """
+        # Backend期望progress是0-1之间的小数
+        progress_fraction = progress / 100.0 if progress > 1 else progress
+        
         payload = {
             'task_id': task_id,
-            'progress': progress,
+            'progress': progress_fraction,
             'message': message,
             'timestamp': time.time(),
         }
         
+        # 添加worker_id到顶层（Backend期望在顶层）
+        if worker_id:
+            payload['worker_id'] = worker_id
+        
+        # 将details中的关键字段提升到顶层（Backend期望在顶层）
         if details:
+            # 提升processedBars, totalBars, currentDate到顶层
+            if 'processed_bars' in details:
+                payload['processed_bars'] = details['processed_bars']
+            if 'total_bars' in details:
+                payload['total_bars'] = details['total_bars']
+            if 'current_date' in details:
+                payload['current_date'] = details['current_date']
+            if 'estimated_time_left' in details:
+                payload['estimated_time_left'] = details['estimated_time_left']
+            
+            # 保留details字段以向后兼容
             payload['details'] = details
         
         return self.send_message(MessageType.PROGRESS.value, payload)
@@ -210,12 +231,31 @@ class RabbitMQClient:
         Returns:
             是否发送成功
         """
+        # 提取files字段到顶层（Backend期望）
+        files = result.get('files')
+        metrics = {
+            'totalTrades': result.get('totalTrades'),
+            'totalReturn': result.get('totalReturn'),
+            'finalCapital': result.get('finalCapital'),
+            'initialCapital': result.get('initialCapital'),
+            'maxDrawdown': result.get('maxDrawdown'),
+            'sharpeRatio': result.get('sharpeRatio'),
+            'winRate': result.get('winRate'),
+            'processedBars': result.get('processedBars'),
+        }
+        
         payload = {
             'task_id': task_id,
+            'worker_id': result.get('workerId'),
             'status': status,
             'result': result,
+            'metrics': metrics,
             'timestamp': time.time(),
         }
+        
+        # 如果有files字段，添加到顶层（Backend期望这个结构）
+        if files:
+            payload['files'] = files
         
         return self.send_message(MessageType.RESULT.value, payload)
     
@@ -389,18 +429,12 @@ class MessageConsumer:
             self.connection = pika.BlockingConnection(parameters)
             self.channel = self.connection.channel()
             
-            # 声明队列（如果不存在则创建），并匹配服务器端既有参数
-            queue_args = None
-            if self.queue_name == 'backtest.task':
-                # 与后端创建的队列参数保持一致，避免 PRECONDITION_FAILED
-                queue_args = {
-                    'x-max-priority': 10,
-                    'x-message-ttl': 3600000,
-                }
+            # 声明队列，使用简单的持久化配置（不添加额外参数）
+            # 保持与Backend配置一致（不使用x-message-ttl, x-max-priority等参数）
             self.channel.queue_declare(
                 queue=self.queue_name,
-                durable=True,
-                arguments=queue_args
+                durable=True
+                # 不添加arguments，保持简单
             )
             
             # 设置 QoS（每次只消费一条消息）

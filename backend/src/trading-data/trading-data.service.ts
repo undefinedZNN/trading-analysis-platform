@@ -679,8 +679,12 @@ export class TradingDataService {
     if (Number.isNaN(toDate.getTime())) {
       throw new BadRequestException('结束时间参数非法');
     }
+    // 裁剪到数据集的时间范围内
     if (toDate.getTime() > datasetEnd.getTime()) {
       toDate = new Date(datasetEnd);
+    }
+    if (toDate.getTime() < datasetStart.getTime()) {
+      toDate = new Date(datasetStart);
     }
 
     let fromDate = query.from ? this.secondsToDate(query.from) : new Date(toDate);
@@ -695,7 +699,9 @@ export class TradingDataService {
       fromDate = new Date(datasetStart);
     }
     if (fromDate > toDate) {
-      throw new BadRequestException('开始时间需早于结束时间');
+      throw new BadRequestException(
+        `请求的时间范围超出数据集范围。数据集时间: ${datasetStart.toISOString()} ~ ${datasetEnd.toISOString()}`
+      );
     }
 
     const matchedAggregation = this.findMatchingAggregation(

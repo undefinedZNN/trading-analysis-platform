@@ -354,9 +354,9 @@ def main():
             vhost=os.getenv('RABBITMQ_VHOST', '/backtest'),
             username=os.getenv('RABBITMQ_USERNAME', 'dev'),
             password=os.getenv('RABBITMQ_PASSWORD', 'devpass'),
-            exchange=os.getenv('RABBITMQ_EXCHANGE', 'backtest'),
+            exchange=os.getenv('RABBITMQ_EXCHANGE', 'backtest.exchange'),  # 修改为与Backend一致
         )
-        task_queue = os.getenv('RABBITMQ_TASK_QUEUE', 'backtest.task')
+        task_queue = os.getenv('RABBITMQ_TASK_QUEUE', 'backtest.tasks')
         cancel_queue = os.getenv('RABBITMQ_TASK_CANCEL_QUEUE', 'backtest.task.cancel')
 
         logger.info(

@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, Logger } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindOptionsWhere, Like, Between } from 'typeorm';
 import * as duckdb from 'duckdb';
-import { access } from 'fs/promises';
+import { access, readdir } from 'fs/promises';
 import { InternalServerErrorException } from '@nestjs/common';
 import {
   BacktestTaskEntity,
@@ -510,7 +510,7 @@ export class BacktestTasksService {
     absolutePath: string;
   }> {
     const task = await this.findOne(taskId);
-    const relativePath =
+    let relativePath =
       task.tradesFilePath ??
       task.resultFilePath ??
       this.extractTradeArtifactPath(task.resultSummary) ??
@@ -520,10 +520,39 @@ export class BacktestTasksService {
       throw new NotFoundException('该任务没有可用的交易明细文件');
     }
 
+    // 移除可能存在的 'backtests/' 前缀（Worker发送的路径格式）
+    if (relativePath.startsWith('backtests/')) {
+      relativePath = relativePath.substring('backtests/'.length);
+      this.logger.debug(`Normalized trades path: ${task.tradesFilePath} -> ${relativePath}`);
+    }
+
     const normalized = this.normalizeResultRelativePath(relativePath);
-    const absolutePath = path.isAbsolute(normalized.absolute)
+    let absolutePath = path.isAbsolute(normalized.absolute)
       ? normalized.absolute
       : resolveBacktestResultPath(normalized.relative);
+
+    // 如果文件不存在，尝试查找带时间戳的文件（如 trades_*.parquet）
+    try {
+      await access(absolutePath);
+    } catch {
+      const dirname = path.dirname(absolutePath);
+      const basename = path.basename(absolutePath, '.parquet');
+      
+      try {
+        const files = await readdir(dirname);
+        const matchedFile = files.find((f: string) => {
+          return f.startsWith(`${basename}_`) && f.endsWith('.parquet');
+        });
+        
+        if (matchedFile) {
+          absolutePath = path.join(dirname, matchedFile);
+          this.logger.debug(`Found timestamped trades file: ${absolutePath}`);
+        }
+      } catch (error) {
+        this.logger.debug(`Could not search for timestamped file: ${(error as Error)?.message}`);
+      }
+    }
+
     return { relativePath: normalized.relative, absolutePath };
   }
 
@@ -569,7 +598,7 @@ export class BacktestTasksService {
         `
           SELECT *
           FROM read_parquet('${source}')
-          ORDER BY ts ASC, sequence_id ASC
+          ORDER BY entry_datetime ASC
           LIMIT ${safePageSize}
           OFFSET ${offset}
         `,
@@ -708,7 +737,7 @@ export class BacktestTasksService {
     const positionAvgEntry = this.toNumber(row.position_avg_entry);
     const context = this.safeParseJson(row.context_json);
     const exitSegments = this.parseExitSegments(context);
-    const sequenceId = this.toNumber(row.sequence_id);
+    const sequenceId = row.sequence_id ? String(row.sequence_id) : undefined;
     return {
       taskId: row.task_id,
       sessionId: row.session_id,
@@ -725,7 +754,7 @@ export class BacktestTasksService {
       feeCurrency: row.fee_currency ?? undefined,
       liquidity: row.liquidity ?? undefined,
       timestamp: this.formatTimestamp(row.ts),
-      sequenceId: sequenceId ?? undefined,
+      sequenceId: sequenceId,
       position:
         positionQuantity !== null || positionAvgEntry !== null || row.position_side
           ? {

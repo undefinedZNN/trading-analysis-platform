@@ -32,3 +32,4 @@ print(f"✅ 清理队列 {queue_name}: 删除了 {result.method.message_count} �
 connection.close()
 
 
+

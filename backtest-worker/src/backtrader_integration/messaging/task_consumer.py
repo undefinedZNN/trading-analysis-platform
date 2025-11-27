@@ -17,7 +17,7 @@ class TaskConsumerConfig:
     
     def __init__(
         self,
-        queue_name: str = 'backtest.task',
+        queue_name: str = 'backtest.tasks',
         cancel_queue: str = 'backtest.task.cancel',
         auto_ack: bool = False,
         prefetch_count: int = 1,
@@ -219,6 +219,7 @@ class BacktestTaskConsumer:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口"""
         self.stop()
+
 
 
 

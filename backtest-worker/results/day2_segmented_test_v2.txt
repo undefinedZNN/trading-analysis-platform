@@ -1,0 +1,28 @@
+2025-11-25 20:57:32,701 - INFO - ================================================================================
+2025-11-25 20:57:32,701 - INFO - SEGMENTED BACKTEST TEST
+2025-11-25 20:57:32,701 - INFO - ================================================================================
+2025-11-25 20:57:32,701 - INFO - ============================================================
+2025-11-25 20:57:32,701 - INFO - SEGMENTED BACKTEST STARTING
+2025-11-25 20:57:32,701 - INFO - ============================================================
+2025-11-25 20:57:32,701 - INFO - Date range: 2022-12-15 to 2023-03-17
+2025-11-25 20:57:32,701 - INFO - Segment size: 0.5 month(s)
+2025-11-25 20:57:32,701 - INFO - Lookback period: 10 days
+2025-11-25 20:57:32,701 - INFO - Exactbars: True
+2025-11-25 20:57:32,701 - INFO - ============================================================
+2025-11-25 20:57:32,701 - ERROR - Test failed: Non-integer years and months are ambiguous and not currently supported.
+Traceback (most recent call last):
+  File "/Volumes/CODE/trading-analysis-platform/backtest-worker/test_segmented_backtest.py", line 184, in <module>
+    result1 = test_segmented_backtest()
+  File "/Volumes/CODE/trading-analysis-platform/backtest-worker/test_segmented_backtest.py", line 77, in test_segmented_backtest
+    result = backtester.run(start_date, end_date)
+  File "/Volumes/CODE/trading-analysis-platform/backtest-worker/src/backtrader_integration/segmented_backtester.py", line 329, in run
+    self.segments = self.create_segments(start_date, end_date)
+  File "/Volumes/CODE/trading-analysis-platform/backtest-worker/src/backtrader_integration/segmented_backtester.py", line 92, in create_segments
+    segment_end = current + relativedelta(months=self.segment_months)
+  File "/Volumes/CODE/trading-analysis-platform/backtest-worker/venv/lib/python3.9/site-packages/dateutil/relativedelta.py", line 173, in __init__
+    raise ValueError("Non-integer years and months are "
+ValueError: Non-integer years and months are ambiguous and not currently supported.
+
+🚀 ============================================================================
+TEST 1: SEGMENTED BACKTEST (530万条数据)
+==============================================================================

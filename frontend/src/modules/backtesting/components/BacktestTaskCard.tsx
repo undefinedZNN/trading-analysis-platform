@@ -298,6 +298,30 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
             status="active"
             strokeColor={{ '0%': '#108ee9', '100%': '#87d068' }}
           />
+          
+          {/* 进度详情 */}
+          {task.metricsSnapshot && (
+            <div style={{ marginTop: 8, fontSize: 12, color: '#666', lineHeight: '20px' }}>
+              <Space wrap size="middle">
+                {task.metricsSnapshot.totalBars && (
+                  <span>
+                    📊 数据进度: {formatNumber(task.metricsSnapshot.processedBars || 0)} / 
+                    {formatNumber(task.metricsSnapshot.totalBars)} bars
+                  </span>
+                )}
+                {task.metricsSnapshot.currentDate && (
+                  <span>
+                    📅 当前时间: {task.metricsSnapshot.currentDate}
+                  </span>
+                )}
+                {task.metricsSnapshot.estimatedTimeLeft && (
+                  <span>
+                    ⏱ 预计剩余: {dayjs.duration(task.metricsSnapshot.estimatedTimeLeft * 1000).humanize()}
+                  </span>
+                )}
+              </Space>
+            </div>
+          )}
         </div>
       )}
 

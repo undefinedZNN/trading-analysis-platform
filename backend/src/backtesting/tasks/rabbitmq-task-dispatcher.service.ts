@@ -58,14 +58,15 @@ export class RabbitMQTaskDispatcherService {
         strategyClassName: 'Strategy',
         strategyParameters: task.strategyParams || {},
         
-        dataConfig: {
-          datasetId: dataset.datasetId,
-          datasetPath: dataset.path || '', // Parquet文件路径
-          tradingPair: dataset.tradingPair,
-          granularity: dataset.granularity,
-          startDate: task.dataConfig?.timeRange?.[0],
-          endDate: task.dataConfig?.timeRange?.[1],
-        },
+      dataConfig: {
+        datasetId: dataset.datasetId,
+        datasetPath: dataset.path || '', // Parquet文件路径
+        tradingPair: dataset.tradingPair,
+        granularity: dataset.granularity,
+        startDate: task.dataConfig?.timeRange?.start,
+        endDate: task.dataConfig?.timeRange?.end,
+        timeframe: (task.dataConfig as any)?.timeframe,
+      },
         
         executionConfig: {
           initialCapital: (task.executionConfig as any)?.initialCapital || 100000,

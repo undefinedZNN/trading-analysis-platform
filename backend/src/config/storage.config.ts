@@ -5,7 +5,7 @@ const STORAGE_ROOT = resolve(process.cwd(), 'storage');
 
 const DEFAULT_RAW_UPLOADS_ROOT = resolve(STORAGE_ROOT, 'raw_uploads');
 const DEFAULT_DATASETS_ROOT = resolve(STORAGE_ROOT, 'datasets');
-const DEFAULT_BACKTEST_RESULTS_ROOT = resolve(STORAGE_ROOT, 'backtests');
+const DEFAULT_BACKTEST_RESULTS_ROOT = resolve(STORAGE_ROOT, 'backtest-results');
 
 export const RAW_UPLOADS_ROOT = process.env.RAW_UPLOADS_ROOT
   ? resolve(process.env.RAW_UPLOADS_ROOT)
@@ -52,7 +52,7 @@ export function resolveDatasetPath(relativePath: string): string {
 }
 
 export function resolveBacktestResultPath(relativePath: string): string {
-  const normalized = normalizeRelativePath(relativePath, 'backtests');
+  const normalized = normalizeRelativePath(relativePath, 'backtest-results');
   if (normalized.absolute) {
     return normalized.absolute;
   }

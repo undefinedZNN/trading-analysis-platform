@@ -165,7 +165,10 @@ export class ParquetStorageService {
       await this.checkFileExists(absolutePath);
 
       // 使用 Python 脚本读取 Parquet 文件
-      const trades = await this.readParquetFile<TradeData>(absolutePath);
+      const rawTrades = await this.readParquetFile<any>(absolutePath);
+
+      // 将Worker的Parquet格式映射到前端期望的字段
+      const trades = rawTrades.map((raw: any, index: number) => this.mapWorkerTradeToFrontend(raw, index));
 
       // 应用过滤条件
       if (filterConditions) {
@@ -177,6 +180,81 @@ export class ParquetStorageService {
       this.logger.error(`Failed to load trades from ${filePath}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * 将Worker生成的Parquet交易数据映射为前端期望的格式
+   */
+  private mapWorkerTradeToFrontend(raw: any, index: number): TradeData {
+    return {
+      // 基本ID字段
+      tradeId: `trade-${index + 1}`,
+      taskId: undefined,
+      sessionId: undefined,
+      strategyId: undefined,
+      scriptVersionId: undefined,
+      sequenceId: String(index + 1),
+
+      // 交易信息
+      symbol: 'ES', // Worker暂未保存symbol，使用默认值
+      side: raw.entry_size > 0 ? 'buy' : 'sell',
+      type: 'limit',
+      quantity: Math.abs(raw.entry_size || 0),
+      price: raw.entry_price,
+
+      // 时间戳
+      timestamp: raw.exit_datetime || raw.entry_datetime,
+      entryTimestamp: raw.entry_datetime,
+      exitTimestamp: raw.exit_datetime,
+      barTimestamp: raw.entry_datetime,
+
+      // 价格
+      entryPrice: raw.entry_price,
+      exitPrice: raw.exit_price,
+      stopPrice: undefined,
+      targetPrice: undefined,
+
+      // 盈亏
+      realizedPnl: raw.pnl,
+      unrealizedPnl: 0,
+      fees: (raw.entry_commission || 0) + (raw.exit_commission || 0),
+      feeCurrency: 'USD',
+
+      // 持仓信息
+      position: {
+        quantity: raw.entry_size || 0,
+        avgEntryPrice: raw.entry_price,
+        side: raw.entry_size > 0 ? 'long' : 'short',
+      },
+
+      // 因子快照
+      factorSnapshot: {
+        entry: {
+          sma_fast: raw.sma_fast,
+          sma_slow: raw.sma_slow,
+          close: raw.close,
+          volume: raw.volume,
+        },
+        exit: {
+          sma_fast: raw.sma_fast,
+          sma_slow: raw.sma_slow,
+          close: raw.close,
+          volume: raw.volume,
+        },
+      },
+
+      // 其他信息
+      liquidity: undefined,
+      reason: undefined,
+      status: 'closed',
+      exitSegments: undefined,
+      context: {
+        pnl_percent: raw.pnl_percent,
+        holding_bars: raw.holding_bars,
+        entry_order_ref: raw.entry_order_ref,
+        exit_order_ref: raw.exit_order_ref,
+      },
+    };
   }
 
   /**
@@ -290,7 +368,54 @@ export class ParquetStorageService {
     if (path.isAbsolute(filePath)) {
       return filePath;
     }
-    return path.join(this.storageBasePath, filePath);
+    
+    // 移除可能存在的 'backtests/' 前缀（Worker发送的路径格式）
+    let normalizedPath = filePath;
+    if (filePath.startsWith('backtests/')) {
+      normalizedPath = filePath.substring('backtests/'.length);
+      this.logger.debug(`Normalized path: ${filePath} -> ${normalizedPath}`);
+    }
+    
+    const fullPath = path.join(this.storageBasePath, normalizedPath);
+    
+    // 如果文件不存在，尝试查找带时间戳的文件（如 trades_*.parquet）
+    if (!this.fileExistsSync(fullPath)) {
+      const dirname = path.dirname(fullPath);
+      const basename = path.basename(fullPath, '.parquet');
+      const pattern = `${basename}_*.parquet`;
+      
+      try {
+        const files = require('fs').readdirSync(dirname);
+        const matchedFile = files.find((f: string) => {
+          return f.startsWith(`${basename}_`) && f.endsWith('.parquet');
+        });
+        
+        if (matchedFile) {
+          const matchedPath = path.join(dirname, matchedFile);
+          this.logger.debug(`Found timestamped file: ${matchedPath}`);
+          return matchedPath;
+        }
+      } catch (error) {
+        // 目录不存在或其他错误，继续返回原路径
+        this.logger.debug(`Could not search for timestamped file: ${error.message}`);
+      }
+    }
+    
+    return fullPath;
+  }
+  
+  /**
+   * 同步检查文件是否存在
+   * @param filePath 文件路径
+   * @returns 文件是否存在
+   */
+  private fileExistsSync(filePath: string): boolean {
+    try {
+      require('fs').accessSync(filePath);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -368,7 +493,16 @@ import json
 # 读取 Parquet 文件
 df = pd.read_parquet('${parquetPath}', engine='pyarrow')
 
-# 转换为 JSON
+# 处理所有datetime列，确保为UTC时区
+for col in df.select_dtypes(include=['datetime64']).columns:
+    if df[col].dt.tz is None:
+        # 如果是naive datetime，假设为UTC并设置时区
+        df[col] = pd.to_datetime(df[col]).dt.tz_localize('UTC')
+    else:
+        # 如果已有时区，转换为UTC
+        df[col] = df[col].dt.tz_convert('UTC')
+
+# 转换为 JSON (date_format='iso' 会保留时区信息)
 json_data = df.to_json(orient='records', date_format='iso')
 
 # 写入 JSON 文件
@@ -383,8 +517,30 @@ print('Read completed')
     await fs.writeFile(scriptPath, pythonScript);
 
     try {
+      // 查找可用的Python解释器（优先使用Worker的虚拟环境）
+      const pythonPaths = [
+        path.join(process.cwd(), '../backtest-worker/venv/bin/python3'),
+        path.join(process.cwd(), '..', 'backtest-worker', 'venv', 'bin', 'python3'),
+        '/usr/local/bin/python3',
+        'python3',
+      ];
+      
+      let pythonCmd = 'python3'; // 默认
+      for (const pythonPath of pythonPaths) {
+        try {
+          if (path.isAbsolute(pythonPath)) {
+            await fs.access(pythonPath);
+            pythonCmd = pythonPath;
+            this.logger.debug(`Using Python: ${pythonCmd}`);
+            break;
+          }
+        } catch {
+          // 路径不存在，继续尝试下一个
+        }
+      }
+      
       // 执行 Python 脚本
-      const { stdout, stderr } = await execAsync(`python3 ${scriptPath}`);
+      const { stdout, stderr } = await execAsync(`${pythonCmd} ${scriptPath}`);
       
       if (stderr) {
         this.logger.warn(`Python stderr: ${stderr}`);

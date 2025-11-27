@@ -12,6 +12,7 @@ import {
   Max,
   Matches,
   IsISO8601,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -145,6 +146,55 @@ export class TimeRangeDto {
 }
 
 /**
+ * 内存优化配置 DTO
+ */
+export class MemoryOptimizationDto {
+  @ApiPropertyOptional({
+    description: '是否启用分段回测（用于大数据集内存优化）',
+    example: true,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  enableSegmented?: boolean;
+
+  @ApiPropertyOptional({
+    description: '每段的天数（启用分段时有效，默认15天）',
+    example: 15,
+    minimum: 1,
+    maximum: 90,
+    default: 15,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  segmentDays?: number;
+
+  @ApiPropertyOptional({
+    description: '回看天数（用于指标预热，默认2天）',
+    example: 2,
+    minimum: 0,
+    maximum: 30,
+    default: 2,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(30)
+  lookbackDays?: number;
+
+  @ApiPropertyOptional({
+    description: '是否启用Exactbars内存优化（默认true）',
+    example: true,
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  enableExactbars?: boolean;
+}
+
+/**
  * 数据配置 DTO
  */
 export class DataConfigDto {
@@ -157,14 +207,24 @@ export class DataConfigDto {
   timeRange!: TimeRangeDto;
 
   @ApiProperty({
-    description: '交易时间周期（如1m、5m、1h、1d等）',
-    example: '1h',
+    description: '策略信号时间周期（如1s、5m、1h等）',
+    example: '5m',
+    enum: ['1s', '5s', '15s', '30s', '1m', '5m', '15m', '30m', '1h', '4h', '1d'],
   })
   @IsString()
-  @Matches(/^(1|5|15|30)m$|^(1|4)h$|^1d$/, {
-    message: '时间周期格式错误，支持：1m、5m、15m、30m、1h、4h、1d',
+  @Matches(/^(1|5|15|30)s$|^(1|5|15|30)m$|^(1|4)h$|^1d$/, {
+    message: '时间周期格式错误，支持：1s、5s、15s、30s、1m、5m、15m、30m、1h、4h、1d',
   })
   timeframe!: string;
+
+  @ApiPropertyOptional({
+    description: '内存优化配置（可选，用于大数据集）',
+    type: MemoryOptimizationDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => MemoryOptimizationDto)
+  memoryOptimization?: MemoryOptimizationDto;
 }
 
 /**

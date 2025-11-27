@@ -1,2 +1,0 @@
-VHOST: /backtest
-QUEUE: backtest.task.cancel

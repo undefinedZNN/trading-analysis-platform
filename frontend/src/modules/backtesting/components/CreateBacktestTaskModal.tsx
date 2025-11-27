@@ -240,6 +240,9 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
         layout="vertical"
         onFinish={handleSubmit}
         initialValues={{
+          dataConfig: {
+            timeframe: '5m', // 默认推荐5分钟
+          },
           executionConfig: {
             initialCapital: 10000,
             leverage: 1,
@@ -422,26 +425,79 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
           />
         </Form.Item>
 
-        {/* 交易周期 */}
+        {/* 策略信号周期 */}
         <Form.Item
           name={['dataConfig', 'timeframe']}
-          label="交易时间周期"
-          rules={[{ required: true, message: '请选择时间周期' }]}
-          tooltip="最小粒度由数据集决定"
+          label="策略信号周期"
+          rules={[{ required: true, message: '请选择策略信号周期' }]}
+          tooltip="策略计算交易信号的时间周期。系统会自动使用1秒数据进行精确成交模拟，确保回测精度。"
         >
           <Select
-            placeholder="请选择时间周期"
+            placeholder="请选择策略信号周期"
             options={[
-              { label: '1分钟', value: '1m' },
-              { label: '5分钟', value: '5m' },
-              { label: '15分钟', value: '15m' },
-              { label: '30分钟', value: '30m' },
-              { label: '1小时', value: '1h' },
-              { label: '4小时', value: '4h' },
-              { label: '1天', value: '1d' },
+              { 
+                label: '1秒 (最精确，适合高频策略)', 
+                value: '1s',
+              },
+              { 
+                label: '5秒', 
+                value: '5s',
+              },
+              { 
+                label: '15秒', 
+                value: '15s',
+              },
+              { 
+                label: '30秒', 
+                value: '30s',
+              },
+              { 
+                label: '1分钟', 
+                value: '1m',
+              },
+              { 
+                label: '5分钟 (推荐，平衡速度与精度)', 
+                value: '5m',
+              },
+              { 
+                label: '15分钟', 
+                value: '15m',
+              },
+              { 
+                label: '30分钟', 
+                value: '30m',
+              },
+              { 
+                label: '1小时 (快速验证)', 
+                value: '1h',
+              },
+              { 
+                label: '4小时', 
+                value: '4h',
+              },
+              { 
+                label: '1天', 
+                value: '1d',
+              },
             ]}
           />
         </Form.Item>
+
+        {/* 精度说明 */}
+        <Alert
+          message="🎯 多周期回测说明"
+          description={
+            <div>
+              <p>• <strong>策略信号</strong>：基于您选择的周期（如5分钟）计算交易信号</p>
+              <p>• <strong>成交模拟</strong>：自动使用1秒数据进行精确成交价格模拟</p>
+              <p>• <strong>回测精度</strong>：消除Bar内成交顺序误差，提供生产级精度</p>
+              <p>• <strong>性能参考</strong>：5分钟周期约需2-3秒，1秒周期约需10-15分钟</p>
+            </div>
+          }
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
 
         <Divider>执行配置</Divider>
 

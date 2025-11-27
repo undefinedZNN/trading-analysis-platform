@@ -152,8 +152,8 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
       smooth: true,
       animation: {
         appear: {
-          animation: 'path-in',
-          duration: 1000,
+          animation: 'fade-in',
+          duration: 500,
         },
       },
       lineStyle: {
@@ -263,8 +263,8 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
       smooth: true,
       animation: {
         appear: {
-          animation: 'path-in',
-          duration: 1000,
+          animation: 'fade-in',
+          duration: 500,
         },
       },
       lineStyle: {
@@ -378,8 +378,8 @@ export const BacktestChartsCard: React.FC<BacktestChartsCardProps> = ({
       yField: ['value', 'value'],
       animation: {
         appear: {
-          animation: 'path-in',
-          duration: 1000,
+          animation: 'fade-in',
+          duration: 500,
         },
       },
       geometryOptions: [
