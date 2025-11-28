@@ -1,0 +1,32 @@
+[1m============================= test session starts ==============================[0m
+platform darwin -- Python 3.9.6, pytest-8.4.2, pluggy-1.6.0 -- /Volumes/CODE/trading-analysis-platform/backtest-worker/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Volumes/CODE/trading-analysis-platform/backtest-worker
+[1mcollecting ... [0mcollected 24 items
+
+tests/test_commission_manager.py::TestCommissionManager::test_stock_simple_percentage_commission [32mPASSED[0m[32m [  4%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_stock_commission_with_minimum [32mPASSED[0m[32m [  8%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_stock_commission_with_stamp_duty [32mPASSED[0m[32m [ 12%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_stock_a_share_typical_config [32mPASSED[0m[32m [ 16%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_futures_fixed_commission [32mPASSED[0m[32m [ 20%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_futures_percentage_commission [32mPASSED[0m[32m [ 25%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_futures_rebar_typical_config [32mPASSED[0m[32m [ 29%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_crypto_simple_percentage_commission [32mPASSED[0m[32m [ 33%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_crypto_maker_taker_commission [32mPASSED[0m[32m [ 37%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_crypto_binance_typical_config [32mPASSED[0m[32m [ 41%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_missing_asset_type [32mPASSED[0m[32m [ 45%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_missing_initial_capital [32mPASSED[0m[32m [ 50%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_unsupported_asset_type [32mPASSED[0m[32m [ 54%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_futures_missing_contract_specs [32mPASSED[0m[32m [ 58%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_futures_invalid_multiplier [32mPASSED[0m[32m [ 62%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_futures_invalid_margin_ratio [32mPASSED[0m[32m [ 66%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_futures_fixed_commission_missing_amount [32mPASSED[0m[32m [ 70%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_stock_unsupported_commission_type [32mPASSED[0m[32m [ 75%][0m
+tests/test_commission_manager.py::TestCommissionManager::test_slippage_configuration [32mPASSED[0m[32m [ 79%][0m
+tests/test_commission_manager.py::TestStockCommissionCalculation::test_small_trade_minimum_commission [32mPASSED[0m[32m [ 83%][0m
+tests/test_commission_manager.py::TestStockCommissionCalculation::test_large_trade_commission [32mPASSED[0m[32m [ 87%][0m
+tests/test_commission_manager.py::TestStockCommissionCalculation::test_stamp_duty_on_sell [32mPASSED[0m[32m [ 91%][0m
+tests/test_commission_manager.py::TestFuturesCommissionCalculation::test_futures_margin_calculation [32mPASSED[0m[32m [ 95%][0m
+tests/test_commission_manager.py::TestFuturesCommissionCalculation::test_futures_profit_calculation [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m24 passed[0m[32m in 0.39s[0m[32m ==============================[0m

@@ -144,6 +144,8 @@ export class ImportProcessingService {
       checksum: summary.checksum,
       labels,
       description: metadata?.description ?? null,
+      assetType: metadata?.assetType ?? 'crypto', // 添加资产类型
+      contractSpecs: metadata?.contractSpecs ?? null, // 添加合约规格
       createdBy: importTask.createdBy,
       updatedBy: importTask.createdBy,
       availableGranularities: [baseGranularity],

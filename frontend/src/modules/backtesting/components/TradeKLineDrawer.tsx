@@ -213,7 +213,8 @@ function buildMarkers(trade: TaskTradeRecord): SeriesMarker<UTCTimestamp>[] {
     `入场 ${formatPrice(trade.entryPrice) ?? ''}`,
   );
 
-  const exitTime = trade.barTimestamp || trade.exitTimestamp || trade.timestamp;
+  // ✅ 修复：出场时间不应该使用 barTimestamp（那是入场时间）
+  const exitTime = trade.exitTimestamp || trade.timestamp;
   pushMarker(
     exitTime,
     trade.side === 'buy' ? 'aboveBar' : 'belowBar',
@@ -274,7 +275,7 @@ function buildMarkers(trade: TaskTradeRecord): SeriesMarker<UTCTimestamp>[] {
         </Space>
       }
       open={open}
-      width={720}
+      width="60%"
       destroyOnClose
       onClose={() => {
         destroyChart();

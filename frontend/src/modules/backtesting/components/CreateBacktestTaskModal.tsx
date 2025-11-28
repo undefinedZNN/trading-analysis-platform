@@ -8,9 +8,9 @@ import {
   DatePicker,
   Divider,
   message,
-  Space,
   Collapse,
   Alert,
+  Card,
 } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -21,6 +21,12 @@ import {
   type CreateBacktestTaskRequest,
 } from '../../../shared/api/backtestTasks';
 import { DynamicParamsForm, type ParamSchema } from './DynamicParamsForm';
+import {
+  AssetType,
+  CommissionType,
+  ASSET_TYPE_OPTIONS,
+  COMMISSION_TYPE_OPTIONS,
+} from '../../../shared/types/asset-types';
 
 const { RangePicker } = DatePicker;
 const { TextArea } = Input;
@@ -46,6 +52,13 @@ interface CreateBacktestTaskModalProps {
     timeStart: string;
     timeEnd: string;
     rowCount: number;
+    assetType?: string;
+    contractSpecs?: {
+      multiplier?: number;
+      marginRatio?: number;
+      lotSize?: number;
+      tickSize?: number;
+    };
   }>;
 }
 
@@ -67,6 +80,8 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | undefined>();
   const [selectedDataset, setSelectedDataset] = useState<any>(null);
   const [parameterSchema, setParameterSchema] = useState<ParamSchema[]>([]);
+  const [selectedAssetType, setSelectedAssetType] = useState<string | undefined>(AssetType.Crypto);
+  const [selectedCommissionType, setSelectedCommissionType] = useState<string>(CommissionType.MakerTaker);
 
   // 场景判断
   const isScenario1 = !!propsStrategyId; // 场景1：策略已知
@@ -102,40 +117,59 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
       fetchStrategy(selectedStrategyId)
         .then((data) => {
           setStrategy(data);
-          // 不再自动选择版本，让用户主动选择
-          // 只设置参数Schema（如果有master版本）
+          
+          // 自动选择 master 版本（如果存在）
           const masterVersion = data.masterVersion || data.latestVersion;
-          if (masterVersion?.parameterSchema) {
-            setParameterSchema(masterVersion.parameterSchema as ParamSchema[]);
+          if (masterVersion) {
+            // 设置参数Schema
+            if (masterVersion.parameterSchema) {
+              setParameterSchema(masterVersion.parameterSchema as ParamSchema[]);
+            }
+            
+            // 自动填充版本ID到表单
+            form.setFieldsValue({
+              scriptVersionId: masterVersion.scriptVersionId,
+            });
           }
         })
         .catch((err) => {
           message.error('加载策略详情失败: ' + err.message);
         });
     }
-  }, [open, selectedStrategyId]);
+  }, [open, selectedStrategyId, form]);
 
   // 监听数据集选择变化
   const handleDatasetChange = (datasetId: number) => {
     const dataset = datasets.find((d) => d.datasetId === datasetId);
     if (dataset) {
       setSelectedDataset(dataset);
-      // 自动填充时间范围
-      form.setFieldsValue({
+      
+      // 自动填充时间范围和信号周期（默认5分钟）
+      const formValues: any = {
         dataConfig: {
           timeRange: [dayjs(dataset.timeStart), dayjs(dataset.timeEnd)],
-          timeframe: dataset.granularity, // 默认使用数据集的粒度
+          timeframe: '5m', // 默认5分钟
         },
-      });
+      };
+      
+      // 如果数据集有资产类型和合约规格，自动填充到执行配置
+      if (dataset.assetType) {
+        setSelectedAssetType(dataset.assetType);
+        formValues.executionConfig = {
+          assetType: dataset.assetType,
+          contractSpecs: dataset.contractSpecs || undefined,
+        };
+      }
+      
+      form.setFieldsValue(formValues);
     }
   };
 
   // 场景2：监听策略选择变化
   const handleStrategyChange = (strategyId: string) => {
     setSelectedStrategyId(strategyId);
-    // 清空版本和参数
+    // 清空参数（版本ID会在useEffect中自动设置为master）
     form.setFieldsValue({
-      scriptVersionId: undefined,
       strategyParams: {},
     });
     setParameterSchema([]);
@@ -160,6 +194,8 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
     setSelectedStrategyId(undefined);
     setParameterSchema([]);
     setSelectedDataset(null);
+    setSelectedAssetType(AssetType.Crypto);
+    setSelectedCommissionType(CommissionType.MakerTaker);
     onCancel();
   };
 
@@ -175,6 +211,10 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
         return;
       }
 
+      // 处理 tradingHours：如果没有填写 start 和 end，则不发送
+      const tradingHours = values.executionConfig.tradingHours;
+      const hasTradingHours = tradingHours?.start && tradingHours?.end;
+
       // 构建请求payload
       const payload: CreateBacktestTaskRequest = {
         taskName: values.taskName,
@@ -185,13 +225,11 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
         strategyParams: values.strategyParams || {},
         executionConfig: {
           initialCapital: values.executionConfig.initialCapital,
-          leverage: values.executionConfig.leverage || 1,
           slippage: values.executionConfig.slippage || 0,
-          fees: {
-            makerFee: values.executionConfig.fees.makerFee,
-            takerFee: values.executionConfig.fees.takerFee,
-          },
-          tradingHours: values.executionConfig.tradingHours,
+          assetType: values.executionConfig.assetType,
+          contractSpecs: values.executionConfig.contractSpecs,
+          commission: values.executionConfig.commission,
+          tradingHours: hasTradingHours ? tradingHours : undefined,
         },
         dataConfig: {
           timeRange: {
@@ -245,11 +283,12 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
           },
           executionConfig: {
             initialCapital: 10000,
-            leverage: 1,
             slippage: 0,
-            fees: {
-              makerFee: 0.0002,
-              takerFee: 0.0005,
+            assetType: AssetType.Crypto,
+            commission: {
+              type: CommissionType.MakerTaker,
+              makerRate: 0.001,
+              takerRate: 0.001,
             },
           },
         }}
@@ -526,38 +565,254 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
           />
         </Form.Item>
 
-        {/* 手续费配置 */}
-        <Space style={{ width: '100%' }} size="large">
-          <Form.Item
-            name={['executionConfig', 'fees', 'makerFee']}
-            label="Maker手续费率"
-            rules={[{ required: true }, { type: 'number', min: 0, max: 0.01 }]}
-            style={{ marginBottom: 0 }}
-          >
-            <InputNumber<number>
-              min={0}
-              max={0.01}
-              step={0.0001}
-              formatter={(value) => `${(value! * 100).toFixed(2)}%`}
-              parser={(value) => parseFloat(value!.replace('%', '')) / 100}
-            />
-          </Form.Item>
+        {/* 资产类型选择 */}
+        <Form.Item
+          name={['executionConfig', 'assetType']}
+          label="资产类型"
+          rules={[{ required: true, message: '请选择资产类型' }]}
+          tooltip="选择回测的资产类型，不同类型有不同的交易规则"
+        >
+          <Select
+            placeholder="请选择资产类型"
+            options={ASSET_TYPE_OPTIONS}
+            onChange={(value) => {
+              setSelectedAssetType(value);
+              // 切换资产类型时清空合约规格
+              form.setFieldsValue({
+                executionConfig: {
+                  contractSpecs: undefined,
+                },
+              });
+            }}
+          />
+        </Form.Item>
 
-          <Form.Item
-            name={['executionConfig', 'fees', 'takerFee']}
-            label="Taker手续费率"
-            rules={[{ required: true }, { type: 'number', min: 0, max: 0.01 }]}
-            style={{ marginBottom: 0 }}
+        {/* 合约规格配置（根据资产类型显示） */}
+        {(selectedAssetType === AssetType.Futures || selectedAssetType === AssetType.Stock) && (
+          <Card
+            size="small"
+            title="合约规格配置"
+            style={{ marginBottom: 16 }}
           >
-            <InputNumber<number>
-              min={0}
-              max={0.01}
-              step={0.0001}
-              formatter={(value) => `${(value! * 100).toFixed(2)}%`}
-              parser={(value) => parseFloat(value!.replace('%', '')) / 100}
-            />
-          </Form.Item>
-        </Space>
+            {selectedAssetType === AssetType.Futures && (
+              <>
+                <Form.Item
+                  name={['executionConfig', 'contractSpecs', 'multiplier']}
+                  label="合约乘数"
+                  tooltip="每手对应的标的物数量，例如螺纹钢期货为 10 吨/手"
+                  rules={[{ required: true, message: '期货必须设置合约乘数' }]}
+                >
+                  <InputNumber
+                    min={1}
+                    placeholder="例：10"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+
+                <Form.Item
+                  name={['executionConfig', 'contractSpecs', 'marginRatio']}
+                  label="保证金比例"
+                  tooltip="交易所规定的保证金比例，例如 0.09 表示 9%，0.007 表示 0.7%"
+                  rules={[{ required: true, message: '期货必须设置保证金比例' }]}
+                >
+                <InputNumber
+                  min={0}
+                  max={1}
+                  step={0.001}
+                  placeholder="例：0.09 或 0.007"
+                  style={{ width: '100%' }}
+                  formatter={(value) => value ? `${(value * 100).toFixed(2)}%` : ''}
+                  parser={(value) => {
+                    const num = value ? parseFloat(value.replace('%', '')) / 100 : 0;
+                    return num as number;
+                  }}
+                />
+                </Form.Item>
+
+                <Form.Item
+                  name={['executionConfig', 'contractSpecs', 'tickSize']}
+                  label="最小变动价位"
+                  tooltip="合约价格的最小变动单位"
+                >
+                  <InputNumber
+                    min={0}
+                    step={0.01}
+                    placeholder="例：1.0"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </>
+            )}
+
+            {selectedAssetType === AssetType.Stock && (
+              <Form.Item
+                name={['executionConfig', 'contractSpecs', 'lotSize']}
+                label="最小交易单位"
+                tooltip="最小交易单位，例如 A 股为 100 股/手"
+              >
+                <InputNumber
+                  min={1}
+                  placeholder="例：100"
+                  style={{ width: '100%' }}
+                />
+              </Form.Item>
+            )}
+          </Card>
+        )}
+
+        {/* 佣金配置 */}
+        <Form.Item
+          name={['executionConfig', 'commission', 'type']}
+          label="佣金类型"
+          rules={[{ required: true, message: '请选择佣金类型' }]}
+          tooltip="选择佣金计算方式"
+        >
+          <Select
+            placeholder="请选择佣金类型"
+            options={COMMISSION_TYPE_OPTIONS}
+            onChange={(value) => {
+              setSelectedCommissionType(value);
+              // 切换佣金类型时清空相关字段
+              form.setFieldsValue({
+                executionConfig: {
+                  commission: {
+                    type: value,
+                    rate: undefined,
+                    amount: undefined,
+                    makerRate: undefined,
+                    takerRate: undefined,
+                    minCommission: undefined,
+                    stampDuty: undefined,
+                  },
+                },
+              });
+            }}
+          />
+        </Form.Item>
+
+        {/* 根据佣金类型显示不同字段 */}
+        {selectedCommissionType === CommissionType.Percentage && (
+          <Card size="small" title="百分比佣金配置" style={{ marginBottom: 16 }}>
+            <Form.Item
+              name={['executionConfig', 'commission', 'rate']}
+              label="费率"
+              rules={[{ required: true, message: '请输入费率' }]}
+              tooltip="佣金费率，例如 0.0003 表示万分之三"
+            >
+              <InputNumber
+                min={0}
+                max={0.1}
+                step={0.0001}
+                placeholder="例：0.0003"
+                style={{ width: '100%' }}
+                formatter={(value) => value ? `${(value * 10000).toFixed(1)}‱` : ''}
+                parser={(value) => {
+                  const num = value ? parseFloat(value.replace('‱', '')) / 10000 : 0;
+                  return num as number;
+                }}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name={['executionConfig', 'commission', 'minCommission']}
+              label="最低佣金（可选）"
+              tooltip="最低佣金金额，例如 A 股最低 5 元"
+            >
+              <InputNumber
+                min={0}
+                placeholder="例：5.0"
+                style={{ width: '100%' }}
+              />
+            </Form.Item>
+
+            {selectedAssetType === AssetType.Stock && (
+              <Form.Item
+                name={['executionConfig', 'commission', 'stampDuty']}
+                label="印花税率（可选）"
+                tooltip="股票印花税率，例如 A 股为 0.001（千分之一）"
+              >
+              <InputNumber
+                min={0}
+                max={0.01}
+                step={0.0001}
+                placeholder="例：0.001"
+                style={{ width: '100%' }}
+                formatter={(value) => value ? `${(value * 1000).toFixed(1)}‰` : ''}
+                parser={(value) => {
+                  const num = value ? parseFloat(value.replace('‰', '')) / 1000 : 0;
+                  return num as number;
+                }}
+              />
+              </Form.Item>
+            )}
+          </Card>
+        )}
+
+        {selectedCommissionType === CommissionType.Fixed && (
+          <Card size="small" title="固定佣金配置" style={{ marginBottom: 16 }}>
+            <Form.Item
+              name={['executionConfig', 'commission', 'amount']}
+              label="固定金额"
+              rules={[{ required: true, message: '请输入固定佣金金额' }]}
+              tooltip="每手/每笔固定佣金，例如期货 2 元/手"
+            >
+              <InputNumber
+                min={0}
+                placeholder="例：2.0"
+                style={{ width: '100%' }}
+                formatter={(value) => value ? `${value} 元` : ''}
+                parser={(value) => {
+                  const num = value ? parseFloat(value.replace('元', '').trim()) : 0;
+                  return num as number;
+                }}
+              />
+            </Form.Item>
+          </Card>
+        )}
+
+        {selectedCommissionType === CommissionType.MakerTaker && (
+          <Card size="small" title="Maker/Taker 佣金配置" style={{ marginBottom: 16 }}>
+            <Form.Item
+              name={['executionConfig', 'commission', 'makerRate']}
+              label="Maker 费率"
+              rules={[{ required: true, message: '请输入 Maker 费率' }]}
+              tooltip="Maker（提供流动性）费率"
+            >
+              <InputNumber
+                min={0}
+                max={0.1}
+                step={0.0001}
+                placeholder="例：0.001"
+                style={{ width: '100%' }}
+                formatter={(value) => value ? `${(value * 10000).toFixed(1)}‱` : ''}
+                parser={(value) => {
+                  const num = value ? parseFloat(value.replace('‱', '')) / 10000 : 0;
+                  return num as number;
+                }}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name={['executionConfig', 'commission', 'takerRate']}
+              label="Taker 费率"
+              rules={[{ required: true, message: '请输入 Taker 费率' }]}
+              tooltip="Taker（消耗流动性）费率"
+            >
+              <InputNumber
+                min={0}
+                max={0.1}
+                step={0.0001}
+                placeholder="例：0.001"
+                style={{ width: '100%' }}
+                formatter={(value) => value ? `${(value * 10000).toFixed(1)}‱` : ''}
+                parser={(value) => {
+                  const num = value ? parseFloat(value.replace('‱', '')) / 10000 : 0;
+                  return num as number;
+                }}
+              />
+            </Form.Item>
+          </Card>
+        )}
 
         {/* 高级配置（可折叠） */}
         <Collapse
@@ -569,19 +824,22 @@ export const CreateBacktestTaskModal: React.FC<CreateBacktestTaskModalProps> = (
               children: (
                 <>
                   <Form.Item
-                    name={['executionConfig', 'leverage']}
-                    label="杠杆倍数"
-                    tooltip="MVP阶段暂不支持，默认为1"
-                  >
-                    <InputNumber min={1} max={125} disabled />
-                  </Form.Item>
-
-                  <Form.Item
                     name={['executionConfig', 'slippage']}
-                    label="滑点"
-                    tooltip="MVP阶段暂不支持，默认为0"
+                    label="滑点比例"
+                    tooltip="滑点比例，例如 0.0005 表示 0.05%"
                   >
-                    <InputNumber min={0} max={1} step={0.0001} disabled />
+                    <InputNumber
+                      min={0}
+                      max={0.01}
+                      step={0.0001}
+                      placeholder="例：0.0005"
+                      style={{ width: '100%' }}
+                      formatter={(value) => value ? `${(value * 100).toFixed(2)}%` : ''}
+                      parser={(value) => {
+                        const num = value ? parseFloat(value.replace('%', '')) / 100 : 0;
+                        return num as number;
+                      }}
+                    />
                   </Form.Item>
 
                   <Form.Item

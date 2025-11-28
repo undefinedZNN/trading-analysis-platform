@@ -1723,6 +1723,8 @@ function StrategyManagementLandingPage() {
           timeStart: d.timeStart,
           timeEnd: d.timeEnd,
           rowCount: d.rowCount,
+          assetType: d.assetType,
+          contractSpecs: d.contractSpecs,
         }))}
       />
     </Space>

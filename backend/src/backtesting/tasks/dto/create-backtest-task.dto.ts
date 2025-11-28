@@ -13,36 +13,17 @@ import {
   Matches,
   IsISO8601,
   IsBoolean,
+  IsEnum,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-
-/**
- * 手续费配置 DTO
- */
-export class FeesDto {
-  @ApiProperty({
-    description: 'Maker手续费率（小数形式，如0.0002表示0.02%）',
-    example: 0.0002,
-    minimum: 0,
-    maximum: 0.01,
-  })
-  @IsNumber()
-  @Min(0)
-  @Max(0.01)
-  makerFee!: number;
-
-  @ApiProperty({
-    description: 'Taker手续费率（小数形式，如0.0005表示0.05%）',
-    example: 0.0005,
-    minimum: 0,
-    maximum: 0.01,
-  })
-  @IsNumber()
-  @Min(0)
-  @Max(0.01)
-  takerFee!: number;
-}
+import {
+  AssetType,
+  CommissionConfigDto,
+  ContractSpecsDto,
+  IsRequiredForFutures,
+  ValidateFuturesContractSpecs,
+} from '../../types/asset-types';
 
 /**
  * 交易时段配置 DTO
@@ -76,8 +57,8 @@ export class TradingHoursDto {
  */
 export class ExecutionConfigDto {
   @ApiProperty({
-    description: '初始资金（美元）',
-    example: 10000,
+    description: '初始资金',
+    example: 100000,
     minimum: 1,
     maximum: 10000000,
   })
@@ -88,33 +69,52 @@ export class ExecutionConfigDto {
   initialCapital!: number;
 
   @ApiProperty({
-    description: '杠杆倍数（MVP阶段固定为1）',
-    example: 1,
-    default: 1,
+    description: '资产类型',
+    enum: AssetType,
+    example: AssetType.FUTURES,
   })
-  @IsNumber()
-  @IsPositive()
-  @Min(1)
-  @Max(125)
-  leverage: number = 1;
+  @IsEnum(AssetType)
+  assetType!: AssetType;
+
+  @ApiPropertyOptional({
+    description: '合约规格（期货必填，股票可选）',
+    type: ContractSpecsDto,
+    example: {
+      multiplier: 10,
+      tickSize: 1.0,
+      marginRatio: 0.09,
+      currency: 'CNY',
+    },
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ContractSpecsDto)
+  @IsRequiredForFutures({ message: '期货必须提供合约规格' })
+  @ValidateFuturesContractSpecs()
+  contractSpecs?: ContractSpecsDto;
 
   @ApiProperty({
-    description: '滑点（MVP阶段固定为0）',
+    description: '佣金配置',
+    type: CommissionConfigDto,
+    example: {
+      type: 'fixed',
+      amount: 2.0,
+    },
+  })
+  @ValidateNested()
+  @Type(() => CommissionConfigDto)
+  commission!: CommissionConfigDto;
+
+  @ApiPropertyOptional({
+    description: '滑点',
     example: 0,
     default: 0,
   })
+  @IsOptional()
   @IsNumber()
   @Min(0)
   @Max(1)
-  slippage: number = 0;
-
-  @ApiProperty({
-    description: '手续费配置',
-    type: FeesDto,
-  })
-  @ValidateNested()
-  @Type(() => FeesDto)
-  fees!: FeesDto;
+  slippage?: number;
 
   @ApiPropertyOptional({
     description: '交易时段配置（可选）',

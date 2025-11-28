@@ -29,6 +29,7 @@ import {
 } from '../../../shared/api/backtestTasks';
 import { ExecutionProgressCard } from './ExecutionProgressCard';
 import { TaskErrorCard } from './TaskErrorCard';
+import { ASSET_TYPE_LABELS, CommissionType } from '../../../shared/types/asset-types';
 
 dayjs.extend(duration);
 
@@ -418,26 +419,92 @@ export const TaskOverviewTab: React.FC<TaskOverviewTabProps> = ({ task }) => {
           <Descriptions.Item label="初始资金">
             <Text strong>${task.executionConfig.initialCapital.toLocaleString()}</Text>
           </Descriptions.Item>
-          <Descriptions.Item label="杠杆倍数">
-            <Tag color="orange">{task.executionConfig.leverage}x</Tag>
+          <Descriptions.Item label="资产类型">
+            <Tag color="blue">
+              {task.executionConfig.assetType && task.executionConfig.assetType in ASSET_TYPE_LABELS
+                ? ASSET_TYPE_LABELS[task.executionConfig.assetType as keyof typeof ASSET_TYPE_LABELS]
+                : task.executionConfig.assetType || '-'}
+            </Tag>
           </Descriptions.Item>
+          
+          {/* 合约规格（如果存在） */}
+          {task.executionConfig.contractSpecs && (
+            <Descriptions.Item label="合约规格" span={2}>
+              <Space direction="vertical" size="small">
+                {task.executionConfig.contractSpecs.multiplier && (
+                  <Text>合约乘数: {task.executionConfig.contractSpecs.multiplier}</Text>
+                )}
+                {task.executionConfig.contractSpecs.marginRatio && (
+                  <Text>
+                    保证金比例: {(task.executionConfig.contractSpecs.marginRatio * 100).toFixed(1)}%
+                  </Text>
+                )}
+                {task.executionConfig.contractSpecs.lotSize && (
+                  <Text>最小交易单位: {task.executionConfig.contractSpecs.lotSize}</Text>
+                )}
+                {task.executionConfig.contractSpecs.tickSize && (
+                  <Text>最小变动价位: {task.executionConfig.contractSpecs.tickSize}</Text>
+                )}
+              </Space>
+            </Descriptions.Item>
+          )}
+          
+          {/* 佣金配置 */}
+          <Descriptions.Item label="佣金配置" span={2}>
+            <Space direction="vertical" size="small">
+              <Text strong>
+                类型: {task.executionConfig.commission?.type || '-'}
+              </Text>
+              
+              {task.executionConfig.commission?.type === CommissionType.Percentage && (
+                <>
+                  <Text>
+                    费率: {task.executionConfig.commission.rate 
+                      ? `${(task.executionConfig.commission.rate * 10000).toFixed(1)}‱` 
+                      : '-'}
+                  </Text>
+                  {task.executionConfig.commission.minCommission && (
+                    <Text>最低佣金: {task.executionConfig.commission.minCommission} 元</Text>
+                  )}
+                  {task.executionConfig.commission.stampDuty && (
+                    <Text>
+                      印花税: {(task.executionConfig.commission.stampDuty * 1000).toFixed(1)}‰
+                    </Text>
+                  )}
+                </>
+              )}
+              
+              {task.executionConfig.commission?.type === CommissionType.Fixed && (
+                <Text>
+                  固定金额: {task.executionConfig.commission.amount} 元/手
+                </Text>
+              )}
+              
+              {task.executionConfig.commission?.type === CommissionType.MakerTaker && (
+                <>
+                  <Text>
+                    Maker: {task.executionConfig.commission.makerRate 
+                      ? `${(task.executionConfig.commission.makerRate * 10000).toFixed(1)}‱` 
+                      : '-'}
+                  </Text>
+                  <Text>
+                    Taker: {task.executionConfig.commission.takerRate 
+                      ? `${(task.executionConfig.commission.takerRate * 10000).toFixed(1)}‱` 
+                      : '-'}
+                  </Text>
+                </>
+              )}
+            </Space>
+          </Descriptions.Item>
+          
           <Descriptions.Item label="滑点设置">
-            {task.executionConfig.slippage > 0
+            {task.executionConfig.slippage && task.executionConfig.slippage > 0
               ? `${(task.executionConfig.slippage * 100).toFixed(4)}%`
               : '无滑点'}
           </Descriptions.Item>
-          <Descriptions.Item label="手续费配置">
-            <Space direction="vertical" size="small">
-              <Text>
-                Maker: {(task.executionConfig.fees.makerFee * 100).toFixed(4)}%
-              </Text>
-              <Text>
-                Taker: {(task.executionConfig.fees.takerFee * 100).toFixed(4)}%
-              </Text>
-            </Space>
-          </Descriptions.Item>
+          
           {task.executionConfig.tradingHours && (
-            <Descriptions.Item label="交易时段" span={2}>
+            <Descriptions.Item label="交易时段">
               <Tag color="cyan">
                 {task.executionConfig.tradingHours.start} ~{' '}
                 {task.executionConfig.tradingHours.end}

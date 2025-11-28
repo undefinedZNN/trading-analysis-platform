@@ -16,6 +16,7 @@ import type { ImportTaskDto } from '../../../shared/api/tradingData';
 import { fetchImport } from '../../../shared/api/tradingData';
 import StatusTag from '../../../shared/components/StatusTag';
 import { IMPORT_STATUS_COLORS, IMPORT_STATUS_LABELS } from '../../../shared/constants/status';
+import { ASSET_TYPE_LABELS } from '../../../shared/types/asset-types';
 
 const { Text } = Typography;
 
@@ -146,6 +147,27 @@ export default function ImportDetailDrawer({
             <Descriptions.Item label="时间粒度">
               {metadata?.granularity || '-'}
             </Descriptions.Item>
+            <Descriptions.Item label="资产类型">
+              {metadata?.assetType ? ASSET_TYPE_LABELS[metadata.assetType] : '-'}
+            </Descriptions.Item>
+            {metadata?.contractSpecs && (
+              <Descriptions.Item label="合约规格" span={2}>
+                <Space direction="vertical" size="small">
+                  {metadata.contractSpecs.multiplier && (
+                    <Text>合约乘数: {metadata.contractSpecs.multiplier}</Text>
+                  )}
+                  {metadata.contractSpecs.marginRatio && (
+                    <Text>保证金比例: {(metadata.contractSpecs.marginRatio * 100).toFixed(1)}%</Text>
+                  )}
+                  {metadata.contractSpecs.lotSize && (
+                    <Text>最小交易单位: {metadata.contractSpecs.lotSize}</Text>
+                  )}
+                  {metadata.contractSpecs.tickSize && (
+                    <Text>最小变动价位: {metadata.contractSpecs.tickSize}</Text>
+                  )}
+                </Space>
+              </Descriptions.Item>
+            )}
             <Descriptions.Item label="时间范围（表单）">
               {formatDateTime(metadata?.timeStart)} ~ {formatDateTime(metadata?.timeEnd)}
             </Descriptions.Item>
@@ -178,6 +200,27 @@ export default function ImportDetailDrawer({
           {dataset ? (
             <Descriptions column={1} size="small" bordered>
               <Descriptions.Item label="数据集 ID">{dataset.datasetId}</Descriptions.Item>
+              <Descriptions.Item label="资产类型">
+                {dataset.assetType ? ASSET_TYPE_LABELS[dataset.assetType] : '-'}
+              </Descriptions.Item>
+              {dataset.contractSpecs && (
+                <Descriptions.Item label="合约规格">
+                  <Space direction="vertical" size="small">
+                    {dataset.contractSpecs.multiplier && (
+                      <Text>合约乘数: {dataset.contractSpecs.multiplier}</Text>
+                    )}
+                    {dataset.contractSpecs.marginRatio && (
+                      <Text>保证金比例: {(dataset.contractSpecs.marginRatio * 100).toFixed(1)}%</Text>
+                    )}
+                    {dataset.contractSpecs.lotSize && (
+                      <Text>最小交易单位: {dataset.contractSpecs.lotSize}</Text>
+                    )}
+                    {dataset.contractSpecs.tickSize && (
+                      <Text>最小变动价位: {dataset.contractSpecs.tickSize}</Text>
+                    )}
+                  </Space>
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="时间范围">
                 {formatDateTime(dataset.timeStart)} ~ {formatDateTime(dataset.timeEnd)}
               </Descriptions.Item>

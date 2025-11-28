@@ -3,6 +3,30 @@ import { RabbitMQConnectionService } from './rabbitmq-connection.service';
 import { RABBITMQ_QUEUES, RABBITMQ_ROUTING_KEYS } from './rabbitmq.config';
 
 /**
+ * 合约规格接口
+ */
+export interface ContractSpecs {
+  multiplier?: number;
+  tickSize?: number;
+  lotSize?: number;
+  marginRatio?: number;
+  currency?: string;
+}
+
+/**
+ * 佣金配置接口
+ */
+export interface CommissionConfig {
+  type: string; // 'percentage' | 'fixed' | 'maker-taker' | 'tiered'
+  rate?: number;
+  amount?: number;
+  makerRate?: number;
+  takerRate?: number;
+  minCommission?: number;
+  stampDuty?: number;
+}
+
+/**
  * 任务消息接口
  */
 export interface TaskMessage {
@@ -21,14 +45,19 @@ export interface TaskMessage {
     datasetPath: string;
     tradingPair: string;
     granularity: string;
+    assetType: string;              // 新增：资产类型
+    contractSpecs?: ContractSpecs;  // 新增：合约规格
     startDate?: string;
     endDate?: string;
+    timeframe?: string;
   };
   
   executionConfig: {
     initialCapital: number;
-    commission: number;
-    slippage: number;
+    assetType: string;              // 新增：资产类型
+    contractSpecs?: ContractSpecs;  // 新增：合约规格
+    commission: CommissionConfig;   // 重构：完整的佣金配置
+    slippage?: number;
     enableFactors?: boolean;
     factorNames?: string[];
   };

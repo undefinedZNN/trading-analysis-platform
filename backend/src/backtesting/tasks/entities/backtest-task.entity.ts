@@ -31,12 +31,24 @@ export interface StrategyParams {
  */
 export interface ExecutionConfig {
   initialCapital: number;
-  leverage: number;
-  slippage: number;
-  fees: {
-    makerFee: number;
-    takerFee: number;
+  assetType: string; // 'stock' | 'futures' | 'crypto' | 'forex'
+  contractSpecs?: {
+    multiplier?: number;
+    tickSize?: number;
+    lotSize?: number;
+    marginRatio?: number;
+    currency?: string;
   };
+  commission: {
+    type: string; // 'percentage' | 'fixed' | 'maker-taker' | 'tiered'
+    rate?: number;
+    amount?: number;
+    makerRate?: number;
+    takerRate?: number;
+    minCommission?: number;
+    stampDuty?: number;
+  };
+  slippage?: number;
   tradingHours?: {
     start: string;
     end: string;

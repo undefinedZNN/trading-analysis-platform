@@ -46,7 +46,14 @@ export class RabbitMQTaskDispatcherService {
         throw new Error(`Dataset ${task.datasetId} not found`);
       }
 
-      // 3. 构建任务消息
+      // 3. 验证资产类型匹配
+      if (task.executionConfig.assetType !== dataset.assetType) {
+        this.logger.warn(
+          `Asset type mismatch: task=${task.executionConfig.assetType}, dataset=${dataset.assetType}`
+        );
+      }
+
+      // 4. 构建任务消息
       const taskMessage: TaskMessage = {
         taskId: task.taskId,
         strategyId: task.strategyId,
@@ -58,20 +65,24 @@ export class RabbitMQTaskDispatcherService {
         strategyClassName: 'Strategy',
         strategyParameters: task.strategyParams || {},
         
-      dataConfig: {
-        datasetId: dataset.datasetId,
-        datasetPath: dataset.path || '', // Parquet文件路径
-        tradingPair: dataset.tradingPair,
-        granularity: dataset.granularity,
-        startDate: task.dataConfig?.timeRange?.start,
-        endDate: task.dataConfig?.timeRange?.end,
-        timeframe: (task.dataConfig as any)?.timeframe,
-      },
+        dataConfig: {
+          datasetId: dataset.datasetId,
+          datasetPath: dataset.path || '', // Parquet文件路径
+          tradingPair: dataset.tradingPair,
+          granularity: dataset.granularity,
+          assetType: dataset.assetType,              // 新增：资产类型
+          contractSpecs: dataset.contractSpecs,      // 新增：合约规格
+          startDate: task.dataConfig?.timeRange?.start,
+          endDate: task.dataConfig?.timeRange?.end,
+          timeframe: (task.dataConfig as any)?.timeframe,
+        },
         
         executionConfig: {
-          initialCapital: (task.executionConfig as any)?.initialCapital || 100000,
-          commission: (task.executionConfig as any)?.fee || (task.executionConfig as any)?.commission || 0.001,
-          slippage: (task.executionConfig as any)?.slippage || 0.0005,
+          initialCapital: task.executionConfig.initialCapital,
+          assetType: task.executionConfig.assetType,        // 新增：资产类型
+          contractSpecs: task.executionConfig.contractSpecs, // 新增：合约规格
+          commission: task.executionConfig.commission,       // 完整配置
+          slippage: task.executionConfig.slippage || 0,
           enableFactors: true,
           factorNames: [],
         },
@@ -84,11 +95,13 @@ export class RabbitMQTaskDispatcherService {
         createdAt: task.createdAt.toISOString(),
       };
 
-      // 4. 发布任务到RabbitMQ
+      // 5. 发布任务到RabbitMQ
       const published = await this.publisherService.publishTask(taskMessage);
 
       if (published) {
-        this.logger.log(`Task ${task.taskId} dispatched successfully via RabbitMQ`);
+        this.logger.log(
+          `Task ${task.taskId} dispatched successfully: assetType=${task.executionConfig.assetType}`
+        );
         return true;
       } else {
         this.logger.error(`Failed to dispatch task ${task.taskId} via RabbitMQ`);

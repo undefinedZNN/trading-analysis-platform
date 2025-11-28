@@ -127,6 +127,12 @@ export class TradingDataService {
       );
     }
 
+    if (query.assetType) {
+      qb.andWhere('dataset.assetType = :assetType', {
+        assetType: query.assetType,
+      });
+    }
+
     qb.leftJoinAndSelect('dataset.importTasks', 'importTask');
     if (query.importStatus) {
       qb.andWhere('importTask.status = :importStatus', {
@@ -176,6 +182,14 @@ export class TradingDataService {
 
     if (payload.updatedBy !== undefined) {
       dataset.updatedBy = payload.updatedBy;
+    }
+
+    if (payload.assetType !== undefined) {
+      dataset.assetType = payload.assetType;
+    }
+
+    if (payload.contractSpecs !== undefined) {
+      dataset.contractSpecs = payload.contractSpecs;
     }
 
     return this.datasetsRepository.save(dataset);
@@ -990,14 +1004,14 @@ export class TradingDataService {
     if (intervalSeconds === baseIntervalSeconds) {
       sql = `
         SELECT
-          FLOOR(epoch(timestamp)) AS time,
+          FLOOR(epoch(timestamp AT TIME ZONE 'UTC')) AS time,
           open,
           high,
           low,
           close,
           volume
         FROM ${parquetScan}
-        WHERE timestamp BETWEEN TIMESTAMPTZ '${fromIso}' AND TIMESTAMPTZ '${toIso}'
+        WHERE timestamp AT TIME ZONE 'UTC' BETWEEN TIMESTAMP '${fromIso}' AND TIMESTAMP '${toIso}'
         ORDER BY timestamp
         ${limitClause};
       `;
@@ -1005,9 +1019,9 @@ export class TradingDataService {
       sql = `
         WITH filtered AS (
           SELECT *,
-            CAST(FLOOR(epoch(timestamp) / ${intervalSeconds}) * ${intervalSeconds} AS BIGINT) AS bucket
+            CAST(FLOOR(epoch(timestamp AT TIME ZONE 'UTC') / ${intervalSeconds}) * ${intervalSeconds} AS BIGINT) AS bucket
           FROM ${parquetScan}
-          WHERE timestamp BETWEEN TIMESTAMPTZ '${fromIso}' AND TIMESTAMPTZ '${toIso}'
+          WHERE timestamp AT TIME ZONE 'UTC' BETWEEN TIMESTAMP '${fromIso}' AND TIMESTAMP '${toIso}'
         )
         SELECT
           bucket AS time,

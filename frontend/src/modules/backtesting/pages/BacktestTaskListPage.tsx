@@ -32,6 +32,7 @@ import { TaskStatisticsCards } from '../components/TaskStatisticsCards';
 import { CreateBacktestTaskModal } from '../components/CreateBacktestTaskModal';
 import { listDatasets, type DatasetDto } from '../../../shared/api/tradingData';
 import { useNavigate } from 'react-router-dom';
+import { AssetType, ASSET_TYPE_OPTIONS } from '../../../shared/types/asset-types';
 
 const { Search } = Input;
 
@@ -63,6 +64,7 @@ export const BacktestTaskListPage: React.FC = () => {
   // 筛选条件
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<BacktestTaskStatus | undefined>();
+  const [assetTypeFilter, setAssetTypeFilter] = useState<string | undefined>();
   const [sortBy, setSortBy] = useState<SortField>(SortField.CREATED_AT);
   const [sortOrder, setSortOrder] = useState<SortOrder>(SortOrder.DESC);
   
@@ -101,6 +103,7 @@ export const BacktestTaskListPage: React.FC = () => {
       logEvent('开始加载任务列表', {
         keyword,
         statusFilter,
+        assetTypeFilter,
         sortBy,
         sortOrder,
         page,
@@ -115,11 +118,19 @@ export const BacktestTaskListPage: React.FC = () => {
         pageSize,
       });
       
-      setTasks(response.tasks);
-      setTotal(response.total);
+      // 客户端筛选：按资产类型过滤
+      let filteredTasks = response.tasks;
+      if (assetTypeFilter) {
+        filteredTasks = response.tasks.filter(
+          (task) => task.executionConfig?.assetType === assetTypeFilter
+        );
+      }
+      
+      setTasks(filteredTasks);
+      setTotal(assetTypeFilter ? filteredTasks.length : response.total);
       logEvent('任务列表加载完成', {
-        count: response.tasks.length,
-        total: response.total,
+        count: filteredTasks.length,
+        total: assetTypeFilter ? filteredTasks.length : response.total,
       });
     } catch (error: any) {
       console.error('[BacktestTasks] 加载任务列表失败', error);
@@ -158,7 +169,7 @@ export const BacktestTaskListPage: React.FC = () => {
   useEffect(() => {
     loadTasks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize, statusFilter, sortBy, sortOrder]);
+  }, [page, pageSize, statusFilter, assetTypeFilter, sortBy, sortOrder]);
 
   /**
    * 搜索
@@ -176,6 +187,7 @@ export const BacktestTaskListPage: React.FC = () => {
     logEvent('重置任务筛选条件');
     setKeyword('');
     setStatusFilter(undefined);
+    setAssetTypeFilter(undefined);
     setSortBy(SortField.CREATED_AT);
     setSortOrder(SortOrder.DESC);
     setPage(1);
@@ -283,6 +295,16 @@ export const BacktestTaskListPage: React.FC = () => {
             <Col>
               <Select
                 style={{ width: 150 }}
+                placeholder="资产类型"
+                value={assetTypeFilter}
+                onChange={setAssetTypeFilter}
+                allowClear
+                options={ASSET_TYPE_OPTIONS}
+              />
+            </Col>
+            <Col>
+              <Select
+                style={{ width: 150 }}
                 placeholder="排序字段"
                 value={sortBy}
                 onChange={setSortBy}
@@ -384,6 +406,8 @@ export const BacktestTaskListPage: React.FC = () => {
           timeStart: d.timeStart,
           timeEnd: d.timeEnd,
           rowCount: d.rowCount,
+          assetType: d.assetType,
+          contractSpecs: d.contractSpecs,
         }))}
       />
     </div>

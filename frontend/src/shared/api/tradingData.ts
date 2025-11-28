@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AssetType, ContractSpecs } from '../types/asset-types';
 
 const client = axios.create({
   baseURL: 'http://localhost:3000/api/v1/trading-data',
@@ -32,6 +33,8 @@ export interface ImportTaskDto {
     labels?: string[];
     timeStart?: string | null;
     timeEnd?: string | null;
+    assetType?: AssetType;
+    contractSpecs?: ContractSpecs;
   } | null;
 }
 
@@ -49,6 +52,8 @@ export interface DatasetDto {
   labels: string[];
   availableGranularities?: string[];
   description?: string | null;
+  assetType?: AssetType;
+  contractSpecs?: ContractSpecs | null;
   deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -117,6 +122,7 @@ export interface ListDatasetsQuery {
   tags?: string[];
   importStatus?: string | null;
   keyword?: string | null;
+  assetType?: string | null;
 }
 
 export interface DatasetCandle {

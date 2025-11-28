@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Card, Table, Button, Space, message } from 'antd';
+import { Card, Table, Button, Space, message, Tag } from 'antd';
 import {
   ReloadOutlined,
   FileTextOutlined,
@@ -19,6 +19,7 @@ import RetryImportModal from '../components/RetryImportModal';
 import CreateImportModal from '../components/CreateImportModal';
 import ImportDetailDrawer from '../components/ImportDetailDrawer';
 import ImportLogModal from '../components/ImportLogModal';
+import { ASSET_TYPE_LABELS } from '../../../shared/types/asset-types';
 
 type ImportListPageProps = {
   onRefreshed?: () => void;
@@ -106,6 +107,13 @@ export function ImportListPage({ onRefreshed }: ImportListPageProps) {
         title: '时间粒度',
         dataIndex: ['metadata', 'granularity'],
         render: (value) => value || '-',
+      },
+      {
+        title: '资产类型',
+        dataIndex: ['metadata', 'assetType'],
+        render: (value: string) => value && value in ASSET_TYPE_LABELS ? (
+          <Tag color="blue">{ASSET_TYPE_LABELS[value as keyof typeof ASSET_TYPE_LABELS]}</Tag>
+        ) : value ? value : '-',
       },
       {
         title: '状态',
@@ -196,7 +204,7 @@ export function ImportListPage({ onRefreshed }: ImportListPageProps) {
           showSizeChanger: true,
           onChange: (nextPage, nextPageSize) => load(nextPage, nextPageSize),
         }}
-        scroll={{ x: 1100 }}
+        scroll={{ x: 1200 }}
       />
 
       <RetryImportModal

@@ -18,6 +18,7 @@ from ..storage import ParquetWriter
 from ..messaging import RabbitMQClient
 from ..analytics import BacktestAnalyzer
 from ..segmented_backtester import SegmentedBacktester
+from ..commission import CommissionManager
 
 logger = logging.getLogger(__name__)
 
@@ -196,11 +197,23 @@ class RabbitMQStrategy(bt.Strategy):
                 
                 # 计算盈亏
                 if self.entry_price:
-                    pnl = (order.executed.price - self.entry_price) * order.executed.size
-                    pnl_percent = ((order.executed.price - self.entry_price) / self.entry_price) * 100
+                    # ✅ 修复：使用 position.size 的绝对值（持仓数量）
+                    # 而不是 order.executed.size（卖出时为负）
+                    position_size = abs(order.executed.size)
+                    price_diff = order.executed.price - self.entry_price
+                    
+                    # ✅ 修复：考虑合约乘数（通过 broker 的 comminfo 获取）
+                    # 注意：pnl 应该已经包含了合约乘数的计算
+                    # 但这里我们手动计算以确保正确性
+                    comminfo = self.broker.getcommissioninfo(self.data_1s)
+                    multiplier = comminfo.p.mult if hasattr(comminfo.p, 'mult') else 1
+                    
+                    # 计算净盈亏（考虑合约乘数但不含佣金）
+                    pnl = price_diff * position_size * multiplier
+                    pnl_percent = (price_diff / self.entry_price) * 100
                     holding_bars = len(self) - self.entry_bar if self.entry_bar else 0
                     
-                    logger.info(f"[Trade] PNL: ${pnl:.2f} ({pnl_percent:.2f}%), holding: {holding_bars} bars")
+                    logger.info(f"[Trade] PNL: ${pnl:.2f} ({pnl_percent:.2f}%), holding: {holding_bars} bars, multiplier: {multiplier}")
                     
                     # 记录出场因子（使用1秒数据的指标和成交量）
                     # FactorCollector会从order对象获取price/size/commission
@@ -345,6 +358,7 @@ class BacktestExecutor:
         
         self.parquet_writer = ParquetWriter()
         self.analyzer = BacktestAnalyzer()
+        self.commission_manager = CommissionManager()
         
         logger.info(f"BacktestExecutor initialized: worker_id={worker_id}")
     
@@ -416,13 +430,17 @@ class BacktestExecutor:
             # 2. 创建Cerebro实例
             cerebro = bt.Cerebro()
             
-            # 3. 设置初始资金
+            # 3. 提取执行配置
             initial_capital = task_message['executionConfig']['initialCapital']
-            cerebro.broker.setcash(initial_capital)
             
-            # 4. 设置手续费
-            commission = task_message['executionConfig'].get('commission', 0.001)
-            cerebro.broker.setcommission(commission=commission)
+            # 4. 配置Broker（初始资金、佣金、保证金等）
+            # 使用 CommissionManager 根据资产类型自动配置
+            self.commission_manager.setup_broker(cerebro, task_message['executionConfig'])
+            logger.info(
+                f"Broker configured: initial_capital={initial_capital}, "
+                f"assetType={task_message['executionConfig'].get('assetType')}, "
+                f"commission={task_message['executionConfig'].get('commission', {}).get('type')}"
+            )
             
             # 5. 加载数据（始终加载1秒数据）
             dataset_path = task_message['dataConfig']['datasetPath']

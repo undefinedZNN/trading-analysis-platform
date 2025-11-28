@@ -185,7 +185,7 @@ export class ParquetStorageService {
   /**
    * 将Worker生成的Parquet交易数据映射为前端期望的格式
    */
-  private mapWorkerTradeToFrontend(raw: any, index: number): TradeData {
+  private mapWorkerTradeToFrontend(raw: any, index: number): any {
     return {
       // 基本ID字段
       tradeId: `trade-${index + 1}`,

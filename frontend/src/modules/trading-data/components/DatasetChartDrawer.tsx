@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Drawer, Space, Select, DatePicker, Spin, Typography, Empty, message, Switch } from 'antd';
+import { Drawer, Space, Select, DatePicker, Spin, Typography, Empty, message, Switch, Tag, Descriptions } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { createChart, ColorType } from 'lightweight-charts';
 import type {
@@ -14,6 +14,7 @@ import type {
   DatasetCandlesResponse,
 } from '../../../shared/api/tradingData';
 import { fetchDatasetCandles } from '../../../shared/api/tradingData';
+import { ASSET_TYPE_LABELS, type AssetType } from '../../../shared/types/asset-types';
 
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
@@ -321,6 +322,51 @@ export default function DatasetChartDrawer({ open, dataset, onClose }: DatasetCh
               {response ? `${new Date(response.from * 1000).toLocaleString()} ~ ${new Date(response.to * 1000).toLocaleString()}` : '自动'}
             </Text>
           </Space>
+
+          {/* 数据集信息 */}
+          <Descriptions column={3} size="small" bordered style={{ background: '#fafafa' }}>
+            <Descriptions.Item label="交易对">{dataset.tradingPair}</Descriptions.Item>
+            <Descriptions.Item label="时间粒度">{dataset.granularity}</Descriptions.Item>
+            <Descriptions.Item label="资产类型">
+              <Tag color="blue">
+                {dataset.assetType && dataset.assetType in ASSET_TYPE_LABELS
+                  ? ASSET_TYPE_LABELS[dataset.assetType as AssetType]
+                  : dataset.assetType || '-'}
+              </Tag>
+            </Descriptions.Item>
+            
+            {dataset.contractSpecs && (
+              <>
+                {dataset.contractSpecs.multiplier && (
+                  <Descriptions.Item label="合约乘数">
+                    {dataset.contractSpecs.multiplier}
+                  </Descriptions.Item>
+                )}
+                {dataset.contractSpecs.marginRatio && (
+                  <Descriptions.Item label="保证金比例">
+                    {(dataset.contractSpecs.marginRatio * 100).toFixed(1)}%
+                  </Descriptions.Item>
+                )}
+                {dataset.contractSpecs.lotSize && (
+                  <Descriptions.Item label="最小交易单位">
+                    {dataset.contractSpecs.lotSize}
+                  </Descriptions.Item>
+                )}
+                {dataset.contractSpecs.tickSize && (
+                  <Descriptions.Item label="最小变动价位">
+                    {dataset.contractSpecs.tickSize}
+                  </Descriptions.Item>
+                )}
+              </>
+            )}
+            
+            <Descriptions.Item label="数据行数">
+              {dataset.rowCount?.toLocaleString() || '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="来源">
+              {dataset.source || '-'}
+            </Descriptions.Item>
+          </Descriptions>
 
           <div style={{ position: 'relative' }}>
             {loading && (

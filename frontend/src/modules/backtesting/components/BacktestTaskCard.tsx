@@ -27,6 +27,7 @@ import {
   deleteBacktestTask,
   executeBacktestTask,
 } from '../../../api/tasks-adapter';
+import { ASSET_TYPE_LABELS } from '../../../shared/types/asset-types';
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
@@ -337,6 +338,14 @@ export const BacktestTaskCard: React.FC<BacktestTaskCardProps> = ({
         {task.dataConfig && (
           <>
             <Item label="时间周期">{task.dataConfig.timeframe}</Item>
+            <Item label="资产类型">
+              <Tag color="blue" style={{ margin: 0 }}>
+                {task.executionConfig?.assetType && 
+                 task.executionConfig.assetType in ASSET_TYPE_LABELS
+                  ? ASSET_TYPE_LABELS[task.executionConfig.assetType as keyof typeof ASSET_TYPE_LABELS]
+                  : task.executionConfig?.assetType || '-'}
+              </Tag>
+            </Item>
             <Item label="初始资金">
               ${formatNumber(task.executionConfig.initialCapital)}
             </Item>

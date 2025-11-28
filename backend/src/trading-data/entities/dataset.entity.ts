@@ -16,6 +16,22 @@ const bigIntTransformer = {
     value === null ? null : Number(value),
 };
 
+/**
+ * 合约规格接口
+ */
+export interface ContractSpecs {
+  /** 合约乘数（期货） */
+  multiplier?: number;
+  /** 最小变动价位 */
+  tickSize?: number;
+  /** 最小交易单位（手数） */
+  lotSize?: number;
+  /** 保证金比例（期货） */
+  marginRatio?: number;
+  /** 计价货币 */
+  currency?: string;
+}
+
 @Entity({ name: 'datasets', orderBy: { createdAt: 'DESC' } })
 export class DatasetEntity extends BaseAuditEntity {
   @PrimaryGeneratedColumn({
@@ -117,6 +133,23 @@ export class DatasetEntity extends BaseAuditEntity {
     comment: '数据集描述或备注信息',
   })
   description?: string | null;
+
+  @Column({
+    type: 'text',
+    name: 'asset_type',
+    nullable: false,
+    default: 'crypto',
+    comment: '资产类型：stock（股票）、futures（期货）、crypto（加密货币）、forex（外汇）',
+  })
+  assetType!: string;
+
+  @Column({
+    type: 'jsonb',
+    name: 'contract_specs',
+    nullable: true,
+    comment: '合约规格信息',
+  })
+  contractSpecs?: ContractSpecs;
 
   @DeleteDateColumn({
     type: 'timestamptz',

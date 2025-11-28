@@ -49,13 +49,13 @@ export const SortOrder = {
 } as const;
 export type SortOrder = (typeof SortOrder)[keyof typeof SortOrder];
 
-/**
- * 手续费配置
- */
-export interface FeesConfig {
-  makerFee: number;
-  takerFee: number;
-}
+// 导入共享类型定义
+import type {
+  AssetType,
+  CommissionType,
+  ContractSpecs,
+  CommissionConfig,
+} from '../types/asset-types';
 
 /**
  * 交易时段
@@ -70,9 +70,10 @@ export interface TradingHours {
  */
 export interface ExecutionConfig {
   initialCapital: number;
-  leverage: number;
-  slippage: number;
-  fees: FeesConfig;
+  assetType: AssetType;
+  contractSpecs?: ContractSpecs;
+  commission: CommissionConfig;
+  slippage?: number;
   tradingHours?: TradingHours;
 }
 

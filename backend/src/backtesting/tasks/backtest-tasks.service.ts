@@ -450,7 +450,7 @@ export class BacktestTasksService {
       scriptVersionId: task.scriptVersionId,
       datasetId: task.datasetId,
       strategyParams: task.strategyParams,
-      executionConfig: task.executionConfig,
+      executionConfig: task.executionConfig as any,
       dataConfig: task.dataConfig,
     };
   }

@@ -30,6 +30,7 @@ export interface ListDatasetsQuery {
   status?: 'active' | 'deleted' | 'all';
   importStatus?: ImportStatus | null;
   keyword?: string | null;
+  assetType?: string | null;
 }
 
 export const sanitizeStringArray = (
@@ -133,12 +134,19 @@ export class ListDatasetsRequestDto implements ListDatasetsQuery {
   @IsString()
   @MaxLength(100)
   keyword?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  assetType?: string | null;
 }
 
 export interface UpdateDatasetMetadataPayload {
   description?: string | null;
   labels?: string[];
   updatedBy?: string | null;
+  assetType?: string | null;
+  contractSpecs?: Record<string, any> | null;
 }
 
 export class UpdateDatasetMetadataDto
@@ -157,6 +165,22 @@ export class UpdateDatasetMetadataDto
   @MaxLength(25, { each: true })
   @ArrayMaxSize(20)
   labels?: string[];
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @MaxLength(50)
+  updatedBy?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @MaxLength(50)
+  assetType?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
+  contractSpecs?: Record<string, any> | null;
 }
 
 export class AppendDatasetRequestDto {

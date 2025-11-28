@@ -28,6 +28,7 @@ from .high_frequency_strategy import HighFrequencyStrategy
 from .pending_order_strategy import PendingOrderStrategy
 from .pyramid_strategy import PyramidStrategy
 from .random_strategy import RandomStrategy
+from .three_line_trend_atr_strategy import ThreeLineTrendAtrStrategy
 
 # 自动注册内置策略
 StrategyFactory.register('ma_cross', MACrossStrategy)
@@ -38,6 +39,7 @@ StrategyFactory.register('high_frequency', HighFrequencyStrategy)
 StrategyFactory.register('pending_order', PendingOrderStrategy)
 StrategyFactory.register('pyramid', PyramidStrategy)
 StrategyFactory.register('random', RandomStrategy)
+StrategyFactory.register('three_line_trend_atr', ThreeLineTrendAtrStrategy)
 
 __all__ = [
     'BaseStrategy',
@@ -51,5 +53,5 @@ __all__ = [
     'PendingOrderStrategy',
     'PyramidStrategy',
     'RandomStrategy',
+    'ThreeLineTrendAtrStrategy',
 ]
-

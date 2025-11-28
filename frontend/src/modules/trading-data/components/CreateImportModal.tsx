@@ -1,9 +1,10 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
-import { Modal, Form, Input, Select, Typography, message } from 'antd';
+import { Modal, Form, Input, Select, Typography, message, InputNumber, Card, Space } from 'antd';
 import { CloudUploadOutlined } from '@ant-design/icons';
 import { createImport } from '../../../shared/api/tradingData';
 import TagInput from './TagInput';
 import { RECOMMENDED_DATASET_TAGS } from '../../../shared/constants/tradingData';
+import { AssetType, ASSET_TYPE_OPTIONS, type ContractSpecs } from '../../../shared/types/asset-types';
 
 const { TextArea } = Input;
 const { Paragraph } = Typography;
@@ -21,6 +22,12 @@ type CreateImportFormValues = {
   labels?: string[];
   description?: string | null;
   createdBy?: string | null;
+  assetType?: AssetType;
+  // 合约规格字段
+  multiplier?: number;
+  marginRatio?: number;
+  lotSize?: number;
+  tickSize?: number;
 };
 
 export default function CreateImportModal({
@@ -31,11 +38,13 @@ export default function CreateImportModal({
   const [form] = Form.useForm();
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [selectedAssetType, setSelectedAssetType] = useState<AssetType | undefined>(undefined);
 
   useEffect(() => {
     if (!open) {
       form.resetFields();
       setUploadFile(null);
+      setSelectedAssetType(undefined);
     }
   }, [open, form]);
 
@@ -47,12 +56,25 @@ export default function CreateImportModal({
 
     const labels: string[] = Array.isArray(values.labels) ? values.labels : [];
 
+    // 构建合约规格（仅在有值时包含）
+    const contractSpecs: ContractSpecs | undefined =
+      values.multiplier || values.marginRatio || values.lotSize || values.tickSize
+        ? {
+            ...(values.multiplier && { multiplier: values.multiplier }),
+            ...(values.marginRatio && { marginRatio: values.marginRatio }),
+            ...(values.lotSize && { lotSize: values.lotSize }),
+            ...(values.tickSize && { tickSize: values.tickSize }),
+          }
+        : undefined;
+
     const metadata = {
       source: values.source || null,
       tradingPair: values.tradingPair,
       granularity: values.granularity,
       labels,
       description: values.description || null,
+      ...(values.assetType && { assetType: values.assetType }),
+      ...(contractSpecs && { contractSpecs }),
     };
 
     const formData = new FormData();
@@ -124,6 +146,97 @@ export default function CreateImportModal({
             ]}
           />
         </Form.Item>
+
+        <Form.Item label="资产类型（可选）" name="assetType">
+          <Select
+            placeholder="请选择资产类型"
+            options={ASSET_TYPE_OPTIONS}
+            allowClear
+            onChange={(value) => {
+              setSelectedAssetType(value);
+              // 切换资产类型时清空合约规格字段
+              form.setFieldsValue({
+                multiplier: undefined,
+                marginRatio: undefined,
+                lotSize: undefined,
+                tickSize: undefined,
+              });
+            }}
+          />
+        </Form.Item>
+
+        {/* 合约规格配置（根据资产类型显示） */}
+        {(selectedAssetType === AssetType.Futures || selectedAssetType === AssetType.Stock) && (
+          <Card
+            size="small"
+            title={
+              <Space>
+                <span>合约规格配置</span>
+                <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                  （可选）
+                </Typography.Text>
+              </Space>
+            }
+            style={{ marginBottom: 16 }}
+          >
+            {selectedAssetType === AssetType.Futures && (
+              <>
+                <Form.Item
+                  label="合约乘数"
+                  name="multiplier"
+                  tooltip="每手对应的标的物数量，例如螺纹钢期货为 10 吨/手"
+                >
+                  <InputNumber
+                    min={1}
+                    placeholder="例：10"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+
+                <Form.Item
+                  label="保证金比例"
+                  name="marginRatio"
+                  tooltip="交易所规定的保证金比例，例如 0.09 表示 9%"
+                >
+                  <InputNumber
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    placeholder="例：0.09"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+
+                <Form.Item
+                  label="最小变动价位"
+                  name="tickSize"
+                  tooltip="合约价格的最小变动单位"
+                >
+                  <InputNumber
+                    min={0}
+                    step={0.01}
+                    placeholder="例：1.0"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </>
+            )}
+
+            {selectedAssetType === AssetType.Stock && (
+              <Form.Item
+                label="最小交易单位"
+                name="lotSize"
+                tooltip="最小交易单位，例如 A 股为 100 股/手"
+              >
+                <InputNumber
+                  min={1}
+                  placeholder="例：100"
+                  style={{ width: '100%' }}
+                />
+              </Form.Item>
+            )}
+          </Card>
+        )}
 
         <Form.Item label="标签" name="labels">
           <TagInput

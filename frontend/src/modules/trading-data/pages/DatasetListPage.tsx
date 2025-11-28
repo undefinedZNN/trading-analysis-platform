@@ -11,9 +11,10 @@ import {
   Input,
   DatePicker,
   Dropdown,
+  Tooltip,
 } from 'antd';
 import type { MenuProps } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { ReloadOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
   fetchDatasets,
@@ -27,6 +28,7 @@ import AppendDatasetModal from '../components/AppendDatasetModal';
 import DatasetChartDrawer from '../components/DatasetChartDrawer';
 import AggregationManagerDrawer from '../components/AggregationManagerDrawer';
 import { MoreOutlined } from '@ant-design/icons';
+import { AssetType, ASSET_TYPE_LABELS, ASSET_TYPE_OPTIONS } from '../../../shared/types/asset-types';
 
 type DatasetListPageProps = {
   onUpdated?: () => void;
@@ -86,6 +88,11 @@ export function DatasetListPage({ onUpdated }: DatasetListPageProps) {
         if (end?.toISOString) {
           next.createdEnd = end.toISOString();
         }
+      }
+
+      const assetType = typeof values.assetType === 'string' ? values.assetType.trim() : '';
+      if (assetType) {
+        next.assetType = assetType;
       }
 
       return next;
@@ -169,6 +176,40 @@ export function DatasetListPage({ onUpdated }: DatasetListPageProps) {
         title: '交易对',
         dataIndex: 'tradingPair',
         width: 160,
+      },
+      {
+        title: '资产类型',
+        dataIndex: 'assetType',
+        width: 140,
+        render: (assetType: string, record: DatasetDto) => {
+          const label = assetType && assetType in ASSET_TYPE_LABELS
+            ? ASSET_TYPE_LABELS[assetType as AssetType]
+            : assetType || '-';
+          
+          // 如果有合约规格，显示信息图标
+          if (record.contractSpecs) {
+            const specs = record.contractSpecs;
+            const tooltipContent = (
+              <div>
+                {specs.multiplier && <div>合约乘数: {specs.multiplier}</div>}
+                {specs.marginRatio && <div>保证金比例: {(specs.marginRatio * 100).toFixed(1)}%</div>}
+                {specs.lotSize && <div>最小交易单位: {specs.lotSize}</div>}
+                {specs.tickSize && <div>最小变动价位: {specs.tickSize}</div>}
+              </div>
+            );
+            
+            return (
+              <Space size={4}>
+                <Tag color="blue">{label}</Tag>
+                <Tooltip title={tooltipContent} placement="top">
+                  <InfoCircleOutlined style={{ color: '#999', cursor: 'help' }} />
+                </Tooltip>
+              </Space>
+            );
+          }
+          
+          return <Tag color="blue">{label}</Tag>;
+        },
       },
       {
         title: '时间粒度',
@@ -349,6 +390,14 @@ export function DatasetListPage({ onUpdated }: DatasetListPageProps) {
         </Form.Item>
         <Form.Item label="交易对" name="tradingPair">
           <Input allowClear placeholder="如：BTC/USDT" style={{ width: 200 }} />
+        </Form.Item>
+        <Form.Item label="资产类型" name="assetType">
+          <Select
+            style={{ width: 160 }}
+            placeholder="全部"
+            allowClear
+            options={ASSET_TYPE_OPTIONS}
+          />
         </Form.Item>
         <Form.Item label="创建时间" name="createdRange">
           <DatePicker.RangePicker showTime allowClear />

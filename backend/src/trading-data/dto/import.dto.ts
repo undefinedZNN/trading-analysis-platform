@@ -10,6 +10,8 @@ import {
   IsPositive,
   ValidateIf,
   IsBoolean,
+  IsObject,
+  IsIn,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { BadRequestException } from '@nestjs/common';
@@ -25,6 +27,8 @@ export interface ImportMetadataPayload extends Record<string, unknown> {
   labels?: string[];
   description?: string | null;
   symbol?: string | null;
+  assetType?: string; // 资产类型：stock, futures, crypto, forex
+  contractSpecs?: Record<string, any>; // 合约规格
 }
 
 export interface CreateImportTaskPayload {
@@ -83,6 +87,14 @@ export class ImportMetadataDto {
   @IsString()
   @MaxLength(500)
   description?: string | null;
+
+  @IsOptional()
+  @IsIn(['stock', 'futures', 'crypto', 'forex'])
+  assetType?: string;
+
+  @IsOptional()
+  @IsObject()
+  contractSpecs?: Record<string, any>;
 }
 
 export class CreateImportTaskDto {
