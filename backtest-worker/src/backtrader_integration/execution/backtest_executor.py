@@ -19,6 +19,13 @@ from ..messaging import RabbitMQClient
 from ..analytics import BacktestAnalyzer
 from ..segmented_backtester import SegmentedBacktester
 from ..commission import CommissionManager
+from ..dynamic_strategy_loader import (
+    DynamicStrategyLoader,
+    StrategyLoadError,
+    StrategySyntaxError,
+    StrategyValidationError,
+    StrategySecurityError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,73 +181,114 @@ class RabbitMQStrategy(bt.Strategy):
                 logger.info(f"[Order] BUY COMPLETED: ref={order.ref}, price={order.executed.price:.2f}, "
                            f"size={order.executed.size}, comm={order.executed.comm:.2f}")
                 
-                self.entry_price = order.executed.price
-                self.entry_bar = len(self)
+                # 判断是开多仓还是平空仓
+                # 如果之前没有持仓，则是开多仓；如果之前有负持仓，则是平空仓
+                is_entry = (self.entry_price is None)
                 
-                # 记录入场因子（使用1秒数据的价格和成交量）
-                logger.debug(f"[FactorCollector] Recording entry factors for order {order.ref}")
-                self.factor_collector.record_entry_factors(
-                    order=order,
-                    price=order.executed.price,
-                    size=order.executed.size,
-                    commission=order.executed.comm,
-                    sma_fast=self.sma_fast[0],
-                    sma_slow=self.sma_slow[0],
-                    close=self.data_1s.close[0],
-                    volume=self.data_1s.volume[0],
-                )
-                logger.info(f"[FactorCollector] Entry recorded. Total trades: {self.factor_collector.get_trades_count()}")
-                
-            elif order.issell():
-                logger.info(f"[Order] SELL COMPLETED: ref={order.ref}, price={order.executed.price:.2f}, "
-                           f"size={order.executed.size}, comm={order.executed.comm:.2f}")
-                
-                # 计算盈亏
-                if self.entry_price:
-                    # ✅ 修复：使用 position.size 的绝对值（持仓数量）
-                    # 而不是 order.executed.size（卖出时为负）
-                    position_size = abs(order.executed.size)
-                    price_diff = order.executed.price - self.entry_price
+                if is_entry:
+                    # 开多仓
+                    self.entry_price = order.executed.price
+                    self.entry_bar = len(self)
                     
-                    # ✅ 修复：考虑合约乘数（通过 broker 的 comminfo 获取）
-                    # 注意：pnl 应该已经包含了合约乘数的计算
-                    # 但这里我们手动计算以确保正确性
-                    comminfo = self.broker.getcommissioninfo(self.data_1s)
-                    multiplier = comminfo.p.mult if hasattr(comminfo.p, 'mult') else 1
-                    
-                    # 计算净盈亏（考虑合约乘数但不含佣金）
-                    pnl = price_diff * position_size * multiplier
-                    pnl_percent = (price_diff / self.entry_price) * 100
-                    holding_bars = len(self) - self.entry_bar if self.entry_bar else 0
-                    
-                    logger.info(f"[Trade] PNL: ${pnl:.2f} ({pnl_percent:.2f}%), holding: {holding_bars} bars, multiplier: {multiplier}")
-                    
-                    # 记录出场因子（使用1秒数据的指标和成交量）
-                    # FactorCollector会从order对象获取price/size/commission
-                    logger.debug(f"[FactorCollector] Recording exit factors for order {order.ref}")
-                    self.factor_collector.record_exit_factors(
+                    # 记录入场因子（做多）
+                    logger.debug(f"[FactorCollector] Recording entry factors for LONG order {order.ref}")
+                    self.factor_collector.record_entry_factors(
                         order=order,
-                        pnl=pnl,
-                        pnl_percent=pnl_percent,
-                        holding_bars=holding_bars,
+                        price=order.executed.price,
+                        size=order.executed.size,
+                        commission=order.executed.comm,
+                        direction='long',  # 明确指定做多
                         sma_fast=self.sma_fast[0],
                         sma_slow=self.sma_slow[0],
                         close=self.data_1s.close[0],
                         volume=self.data_1s.volume[0],
                     )
-                    
-                    self.trade_count += 1
-                    logger.info(f"[FactorCollector] Exit recorded. Total trades: {self.factor_collector.get_trades_count()}")
-                    
-                    self.entry_price = None
-                    self.entry_bar = None
+                    logger.info(f"[FactorCollector] LONG entry recorded. Total trades: {self.factor_collector.get_trades_count()}")
                 else:
-                    logger.warning(f"[Order] Sell order {order.ref} completed but no entry_price found")
+                    # 平空仓，处理出场
+                    logger.info(f"[Order] Closing SHORT position")
+                    self._handle_exit_order(order)
+                
+            elif order.issell():
+                logger.info(f"[Order] SELL COMPLETED: ref={order.ref}, price={order.executed.price:.2f}, "
+                           f"size={order.executed.size}, comm={order.executed.comm:.2f}")
+                
+                # 判断是开空仓还是平多仓
+                # 如果之前没有持仓，则是开空仓；如果之前有正持仓，则是平多仓
+                is_entry = (self.entry_price is None)
+                
+                if is_entry:
+                    # 开空仓
+                    self.entry_price = order.executed.price
+                    self.entry_bar = len(self)
+                    
+                    # 记录入场因子（做空）
+                    logger.debug(f"[FactorCollector] Recording entry factors for SHORT order {order.ref}")
+                    self.factor_collector.record_entry_factors(
+                        order=order,
+                        price=order.executed.price,
+                        size=order.executed.size,
+                        commission=order.executed.comm,
+                        direction='short',  # 明确指定做空
+                        sma_fast=self.sma_fast[0],
+                        sma_slow=self.sma_slow[0],
+                        close=self.data_1s.close[0],
+                        volume=self.data_1s.volume[0],
+                    )
+                    logger.info(f"[FactorCollector] SHORT entry recorded. Total trades: {self.factor_collector.get_trades_count()}")
+                else:
+                    # 平多仓，处理出场
+                    logger.info(f"[Order] Closing LONG position")
+                    self._handle_exit_order(order)
         
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
             logger.warning(f"[Order] {order.status}: ref={order.ref}")
         
         self.order = None
+    
+    def _handle_exit_order(self, order):
+        """处理出场订单"""
+        # 计算盈亏
+        if self.entry_price:
+            # ✅ 修复：使用 position.size 的绝对值（持仓数量）
+            # 而不是 order.executed.size（卖出时为负）
+            position_size = abs(order.executed.size)
+            price_diff = order.executed.price - self.entry_price
+            
+            # ✅ 修复：考虑合约乘数（通过 broker 的 comminfo 获取）
+            # 注意：pnl 应该已经包含了合约乘数的计算
+            # 但这里我们手动计算以确保正确性
+            comminfo = self.broker.getcommissioninfo(self.data_1s)
+            multiplier = comminfo.p.mult if hasattr(comminfo.p, 'mult') else 1
+            
+            # 计算净盈亏（考虑合约乘数但不含佣金）
+            pnl = price_diff * position_size * multiplier
+            pnl_percent = (price_diff / self.entry_price) * 100
+            holding_bars = len(self) - self.entry_bar if self.entry_bar else 0
+            
+            logger.info(f"[Trade] PNL: ${pnl:.2f} ({pnl_percent:.2f}%), holding: {holding_bars} bars, multiplier: {multiplier}")
+            
+            # 记录出场因子（使用1秒数据的指标和成交量）
+            # FactorCollector会从order对象获取price/size/commission
+            logger.debug(f"[FactorCollector] Recording exit factors for order {order.ref}")
+            self.factor_collector.record_exit_factors(
+                order=order,
+                pnl=pnl,
+                pnl_percent=pnl_percent,
+                holding_bars=holding_bars,
+                sma_fast=self.sma_fast[0],
+                sma_slow=self.sma_slow[0],
+                close=self.data_1s.close[0],
+                volume=self.data_1s.volume[0],
+            )
+            
+            self.trade_count += 1
+            logger.info(f"[FactorCollector] Exit recorded. Total trades: {self.factor_collector.get_trades_count()}")
+            
+            self.entry_price = None
+            self.entry_bar = None
+        else:
+            logger.warning(f"[Order] Exit order {order.ref} completed but no entry_price found")
     
     def next(self):
         """策略逻辑（每1秒调用一次）"""
@@ -360,7 +408,15 @@ class BacktestExecutor:
         self.analyzer = BacktestAnalyzer()
         self.commission_manager = CommissionManager()
         
-        logger.info(f"BacktestExecutor initialized: worker_id={worker_id}")
+        # 动态策略加载器
+        self.strategy_loader = DynamicStrategyLoader(
+            enable_cache=True,
+            cache_size=100,
+            enable_security_check=True,
+            load_timeout=5,
+        )
+        
+        logger.info(f"BacktestExecutor initialized: worker_id={worker_id}, strategy_loader enabled")
     
     def execute_backtest(self, task_message: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -498,18 +554,117 @@ class BacktestExecutor:
                 details={'dataset': dataset_path, 'timeframe': strategy_timeframe}
             )
             
-            # 6. 添加策略
+            # 6. 添加策略（动态加载或使用默认策略）
+            strategy_code = task_message.get('strategyCode')
+            strategy_id = task_message.get('strategyId')
             strategy_params = task_message.get('strategyParameters', {})
-            cerebro.addstrategy(
-                RabbitMQStrategy,
-                fast_period=strategy_params.get('fast', 10),
-                slow_period=strategy_params.get('slow', 20),
-                task_id=task_id,
-                worker_id=self.worker_id,
-                rabbitmq_client=self.rabbitmq_client,
-                strategy_timeframe=strategy_timeframe,  # 传递策略周期
-                total_bars=data_length_1s,  # 传递数据总行数
-            )
+            
+            if strategy_code and strategy_id:
+                # 动态加载用户策略
+                try:
+                    logger.info(f"Loading user strategy: {strategy_id}")
+                    
+                    StrategyClass = self.strategy_loader.load_strategy(
+                        strategy_code=strategy_code,
+                        strategy_id=strategy_id,
+                        class_name='Strategy',  # 期望的导出名
+                        validate=True,
+                    )
+                    
+                    # 添加到 Cerebro
+                    # 注意：用户策略可能不接受 task_id, worker_id 等参数
+                    # 只传递 strategyParameters 中定义的参数
+                    cerebro.addstrategy(
+                        StrategyClass,
+                        **strategy_params  # 只传递用户参数
+                    )
+                    
+                    # 🔥 重要：添加 FactorCollector（用于收集交易数据）
+                    cerebro.addobserver(FactorCollector)
+                    
+                    logger.info(f"User strategy loaded: {StrategyClass.__name__}")
+                    
+                    # 发送进度
+                    self.rabbitmq_client.send_progress(
+                        task_id=task_id,
+                        worker_id=self.worker_id,
+                        progress=12.0,
+                        message=f'User strategy loaded: {StrategyClass.__name__}',
+                        details={'strategy_id': strategy_id, 'strategy_class': StrategyClass.__name__}
+                    )
+                    
+                except StrategySyntaxError as e:
+                    error_msg = f'策略代码语法错误: {str(e)}'
+                    logger.error(f"Failed to load user strategy: {error_msg}")
+                    self.rabbitmq_client.send_message(
+                        routing_key='error',
+                        message={
+                            'taskId': task_id,
+                            'workerId': self.worker_id,
+                            'error': error_msg,
+                            'errorType': 'strategy_syntax_error',
+                            'timestamp': time.time(),
+                        }
+                    )
+                    raise ValueError(error_msg)
+                    
+                except StrategyValidationError as e:
+                    error_msg = f'策略验证失败: {str(e)}'
+                    logger.error(f"Failed to load user strategy: {error_msg}")
+                    self.rabbitmq_client.send_message(
+                        routing_key='error',
+                        message={
+                            'taskId': task_id,
+                            'workerId': self.worker_id,
+                            'error': error_msg,
+                            'errorType': 'strategy_validation_error',
+                            'timestamp': time.time(),
+                        }
+                    )
+                    raise ValueError(error_msg)
+                    
+                except StrategySecurityError as e:
+                    error_msg = f'策略安全检查失败: {str(e)}'
+                    logger.error(f"Failed to load user strategy: {error_msg}")
+                    self.rabbitmq_client.send_message(
+                        routing_key='error',
+                        message={
+                            'taskId': task_id,
+                            'workerId': self.worker_id,
+                            'error': error_msg,
+                            'errorType': 'strategy_security_error',
+                            'timestamp': time.time(),
+                        }
+                    )
+                    raise ValueError(error_msg)
+                    
+                except Exception as e:
+                    error_msg = f'策略加载失败: {str(e)}'
+                    logger.error(f"Failed to load user strategy: {error_msg}", exc_info=True)
+                    self.rabbitmq_client.send_message(
+                        routing_key='error',
+                        message={
+                            'taskId': task_id,
+                            'workerId': self.worker_id,
+                            'error': error_msg,
+                            'errorType': 'strategy_loading_error',
+                            'timestamp': time.time(),
+                        }
+                    )
+                    raise ValueError(error_msg)
+            else:
+                # 回退：使用默认策略（向后兼容）
+                logger.warning("No strategy code provided, using default RabbitMQStrategy")
+                cerebro.addstrategy(
+                    RabbitMQStrategy,
+                    fast_period=strategy_params.get('fast', 10),
+                    slow_period=strategy_params.get('slow', 20),
+                    task_id=task_id,
+                    worker_id=self.worker_id,
+                    rabbitmq_client=self.rabbitmq_client,
+                    strategy_timeframe=strategy_timeframe,  # 传递策略周期
+                    total_bars=data_length_1s,  # 传递数据总行数
+                )
             
             # 7. 执行回测
             start_time = time.time()
@@ -525,20 +680,29 @@ class BacktestExecutor:
             final_value = cerebro.broker.getvalue()
             
             # 9. 🔥 关键修复: 从FactorCollector提取交易数据
-            logger.info(f"[Result] Strategy trade_count: {strategy.trade_count}")
-            logger.info(f"[Result] FactorCollector trades: {strategy.factor_collector.get_trades_count()}")
+            # 注意：用户策略可能没有 trade_count 和 bar_count 属性
+            if hasattr(strategy, 'trade_count'):
+                logger.info(f"[Result] Strategy trade_count: {strategy.trade_count}")
             
-            trades = strategy.factor_collector.trades  # 获取交易记录
-            logger.info(f"[Result] Extracted {len(trades)} trades from FactorCollector")
-            
-            if len(trades) > 0:
-                logger.info(f"[Result] First trade: {trades[0]}")
-                logger.info(f"[Result] Last trade: {trades[-1]}")
+            trades = []
+            if hasattr(strategy, 'factor_collector') and strategy.factor_collector is not None:
+                logger.info(f"[Result] FactorCollector trades: {strategy.factor_collector.get_trades_count()}")
+                trades = strategy.factor_collector.trades  # 获取交易记录
+                logger.info(f"[Result] Extracted {len(trades)} trades from FactorCollector")
+                
+                if len(trades) > 0:
+                    logger.info(f"[Result] First trade: {trades[0]}")
+                    logger.info(f"[Result] Last trade: {trades[-1]}")
+                else:
+                    logger.warning(f"[Result] No trades found! This is unexpected if there were signals.")
             else:
-                logger.warning(f"[Result] No trades found! This is unexpected if there were signals.")
+                # 用户策略可能没有使用 FactorCollector 或者初始化失败
+                logger.warning("[Result] Strategy does not have factor_collector or it is None, no trades will be recorded")
             
             # 10. 提取权益曲线（简化版）
-            equity_curve = self._extract_equity_curve(cerebro, initial_capital, final_value, strategy.bar_count)
+            # 使用数据长度作为 bar_count
+            bar_count = getattr(strategy, 'bar_count', data_length_1s)
+            equity_curve = self._extract_equity_curve(cerebro, initial_capital, final_value, bar_count)
             logger.info(f"Generated equity curve: {len(equity_curve)} points")
             
             # 11. 计算统计指标（简化版）

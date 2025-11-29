@@ -196,3 +196,4 @@ class ImprovedMakerTakerCommInfo(bt.CommInfoBase):
         
         return comm
 
+

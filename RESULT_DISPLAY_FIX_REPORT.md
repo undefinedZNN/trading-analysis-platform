@@ -274,3 +274,4 @@ GET /api/v1/backtest/tasks/be3651f5-5eef-4113-979c-3d44933f2ee6/trades?page=1&li
 **修复时间**: 2025-11-27 00:25  
 **修复状态**: ✅ 已完成并验证
 
+

@@ -54,3 +54,4 @@ FROM import_tasks;
 -- 完成提示
 SELECT '✅ 数据清理完成！现在可以运行数据库迁移了。' as message;
 
+

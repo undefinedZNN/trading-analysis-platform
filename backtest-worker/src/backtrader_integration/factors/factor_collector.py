@@ -72,6 +72,7 @@ class FactorCollector(bt.Observer):
         price: float,
         size: float,
         commission: float,
+        direction: str = None,
         **custom_factors
     ) -> None:
         """
@@ -82,11 +83,18 @@ class FactorCollector(bt.Observer):
             price: 入场价格
             size: 入场数量
             commission: 手续费
+            direction: 交易方向 ('long' 或 'short')，如果不提供则根据订单类型判断
             **custom_factors: 自定义因子（例如 sma_fast, sma_slow, close, volume 等）
         """
         if not self.strategy:
             logger.warning("Strategy not set, cannot record entry factors")
             return
+        
+        # 判断交易方向：
+        # 如果外部提供了direction，则使用外部提供的
+        # 否则根据订单类型判断：buy=做多，sell=做空
+        if direction is None:
+            direction = 'long' if order.isbuy() else 'short'
         
         factors = {
             'entry_datetime': self.strategy.data.datetime.datetime(0),
@@ -94,12 +102,13 @@ class FactorCollector(bt.Observer):
             'entry_size': size,
             'entry_order_ref': order.ref,
             'entry_commission': commission,
+            'direction': direction,  # 记录交易方向
             **custom_factors  # 支持自定义因子
         }
         
         self.current_trade_info[order.ref] = factors
         
-        logger.debug(f"Entry factors recorded: order_ref={order.ref}, price={price:.2f}, size={size}")
+        logger.debug(f"Entry factors recorded: order_ref={order.ref}, direction={direction}, price={price:.2f}, size={size}")
     
     def record_holding_factors(
         self,

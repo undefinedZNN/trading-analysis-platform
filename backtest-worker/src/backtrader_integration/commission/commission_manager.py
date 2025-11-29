@@ -260,6 +260,52 @@ class CommissionManager:
                 percabs=True
             )
             logger.info(f"✅ Futures percentage commission set: {rate * 10000:.1f}‱")
+            
+        elif comm_type == 'maker-taker':
+            # Maker/Taker 差异化费率（期货交易所也可能使用）
+            try:
+                from .maker_taker_commission import MakerTakerCommInfo
+                
+                maker_rate = commission_config.get('makerRate', 0.0002)
+                taker_rate = commission_config.get('takerRate', 0.0004)
+                
+                # 为期货配置 Maker/Taker 佣金
+                class FuturesMakerTakerCommInfo(MakerTakerCommInfo):
+                    """期货的 Maker/Taker 佣金"""
+                    params = (
+                        ('maker_rate', maker_rate),
+                        ('taker_rate', taker_rate),
+                        ('mult', multiplier),
+                        ('margin', None),
+                        ('automargin', margin_ratio),
+                        ('stocklike', False),
+                    )
+                
+                cerebro.broker.addcommissioninfo(FuturesMakerTakerCommInfo())
+                
+                logger.info(
+                    f"✅ Futures Maker/Taker commission set: "
+                    f"maker={maker_rate * 10000:.1f}‱, taker={taker_rate * 10000:.1f}‱"
+                )
+            except ImportError:
+                # 如果还未实现 MakerTakerCommInfo，使用平均费率
+                logger.warning(
+                    "MakerTakerCommInfo not implemented yet, using average rate for futures"
+                )
+                maker_rate = commission_config.get('makerRate', 0.0002)
+                taker_rate = commission_config.get('takerRate', 0.0004)
+                avg_rate = (maker_rate + taker_rate) / 2
+                
+                cerebro.broker.setcommission(
+                    commission=avg_rate,
+                    mult=multiplier,
+                    margin=None,
+                    automargin=margin_ratio,
+                    stocklike=False,
+                    commtype=bt.CommInfoBase.COMM_PERC,
+                    percabs=True
+                )
+                logger.info(f"✅ Futures commission set (average): {avg_rate * 10000:.1f}‱")
         else:
             raise ValueError(f"Unsupported commission type for futures: {comm_type}")
         
@@ -341,4 +387,5 @@ class CommissionManager:
             logger.info(f"✅ Crypto commission set: {rate * 10000:.1f}‱")
         else:
             raise ValueError(f"Unsupported commission type for crypto: {comm_type}")
+
 

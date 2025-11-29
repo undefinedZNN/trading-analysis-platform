@@ -154,6 +154,24 @@ class BacktestTaskConsumer:
             try:
                 logger.info(f"Received task message: {message.get('taskId')}")
                 
+                # 检查消息类型：如果包含 'reason' 字段，说明是取消消息，被错误路由到任务队列
+                if 'reason' in message and 'strategyCode' not in message:
+                    logger.warning(
+                        f"Received cancel message in task queue (wrong routing): {message.get('taskId')}. "
+                        f"Acknowledging to remove from queue."
+                    )
+                    return True  # 返回 True 表示成功处理，消息会被 ack
+                
+                # 检查是否包含必需字段
+                required_fields = ['taskId', 'strategyId', 'scriptVersionId', 'strategyCode']
+                missing_fields = [f for f in required_fields if f not in message]
+                if missing_fields:
+                    logger.error(
+                        f"Invalid task message - missing required fields: {missing_fields}. "
+                        f"Message keys: {list(message.keys())}. Acknowledging to remove from queue."
+                    )
+                    return True  # 返回 True 以移除无效消息
+                
                 # 解析任务消息
                 task_message = TaskMessage(message)
                 
@@ -162,7 +180,11 @@ class BacktestTaskConsumer:
                 
             except Exception as e:
                 logger.error(f"Error processing task message: {e}")
-                return False
+                import traceback
+                logger.error(traceback.format_exc())
+                # 对于解析错误，也返回 True 以避免无限重试
+                logger.warning("Acknowledging invalid message to prevent infinite retry")
+                return True
         
         # 开始消费（会阻塞）
         self.task_consumer.consume(

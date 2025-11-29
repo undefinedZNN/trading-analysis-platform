@@ -59,3 +59,4 @@ export class AddAssetTypeAndContractSpecs1732700000000 implements MigrationInter
   }
 }
 
+

@@ -35,7 +35,7 @@ export class PythonStrategyValidator {
 
     // 检查策略类定义
     if (!this.checkStrategyClass(code)) {
-      errors.push('未找到策略类定义。策略类必须继承自 bt.Strategy');
+      errors.push('未找到策略类定义。策略类必须继承自 bt.Strategy 或 BaseStrategy');
     }
 
     // 检查策略导出
@@ -84,8 +84,8 @@ export class PythonStrategyValidator {
    * 检查策略类定义
    */
   private checkStrategyClass(code: string): boolean {
-    // 匹配 class XXX(bt.Strategy): 或 class XXX(backtrader.Strategy):
-    const classPattern = /class\s+(\w+)\s*\(\s*(bt\.Strategy|backtrader\.Strategy)\s*\)\s*:/;
+    // 匹配 class XXX(bt.Strategy): 或 class XXX(backtrader.Strategy): 或 class XXX(BaseStrategy):
+    const classPattern = /class\s+(\w+)\s*\(\s*(bt\.Strategy|backtrader\.Strategy|BaseStrategy)\s*\)\s*:/;
     return classPattern.test(code);
   }
 

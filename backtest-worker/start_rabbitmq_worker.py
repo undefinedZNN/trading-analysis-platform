@@ -99,6 +99,8 @@ def handle_backtest_task(task: TaskMessage) -> bool:
         # 准备任务消息（转换为dict格式）
         task_message = {
             'taskId': task.task_id,
+            'strategyId': task.strategy_id,
+            'scriptVersionId': task.script_version_id,
             'strategyCode': task.strategy_code,
             'strategyClassName': task.strategy_class_name,
             'strategyParameters': task.strategy_parameters or {},

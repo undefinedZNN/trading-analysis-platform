@@ -9,3 +9,4 @@ from .maker_taker_commission import MakerTakerCommInfo
 
 __all__ = ['CommissionManager', 'MakerTakerCommInfo']
 
+
